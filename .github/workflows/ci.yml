@@ -16,7 +16,7 @@ jobs:
   # --- 1. CI Code Verification ---
   check-bot:
     name: Build & Test Go Bot
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -35,7 +35,7 @@ jobs:
 
   check-kepco:
     name: Build & Test KEPCO API
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout Code (with submodules)
         uses: actions/checkout@v4
@@ -65,17 +65,14 @@ jobs:
     name: Build Native Docker Image (${{ matrix.platform.arch }})
     needs: [check-bot, check-kepco]
     runs-on: ${{ matrix.platform.runs_on }}
-    container: ${{ matrix.platform.container }}
     strategy:
       fail-fast: false
       matrix:
         platform:
           - arch: amd64
-            runs_on: ubuntu-latest
-            container: fedora:43
+            runs_on: ubuntu-24.04
           - arch: arm64
             runs_on: ubuntu-24.04-arm
-            container: null
 
     steps:
       - name: Checkout Code (with submodules)
@@ -129,7 +126,7 @@ jobs:
   merge-manifests:
     name: Combine Multi-Arch Manifests
     needs: build-native-images
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Download All Digest Artifacts
         uses: actions/download-artifact@v4
@@ -158,7 +155,7 @@ jobs:
             ${{ env.IMAGE_NAME_BOT }}@${BOT_AMD64} \
             ${{ env.IMAGE_NAME_BOT }}@${BOT_ARM64}
 
-      - name: Merge & Push Kepco Multi-Arch Image (amd64 + arm64)
+      - name: Merge & Push Kepco Multi-Arch Image
         run: |
           KEPCO_AMD64=$(cat /tmp/digests/kepco-amd64)
           KEPCO_ARM64=$(cat /tmp/digests/kepco-arm64)
