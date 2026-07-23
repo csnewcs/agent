@@ -131,11 +131,19 @@ func makeCommands(session *discordgo.Session, config *Config) {
 			Required:     false,
 			Autocomplete: true,
 		}).
+		AddArg(&discordgo.ApplicationCommandOption{
+			Type:        discordgo.ApplicationCommandOptionBoolean,
+			Name:        "ephemeral",
+			Description: "응답을 자신에게만 보이기 (비공개 응답)",
+			Required:    false,
+		}).
 		WithFunction(func(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 			query := getInteractionOptionString(ic, "query")
 			if query == "" {
 				return
 			}
+
+			ephemeral := getInteractionOptionBool(ic, "ephemeral")
 
 			sessionArg := getInteractionOptionString(ic, "session")
 			if sessionArg == "new" {
@@ -159,7 +167,7 @@ func makeCommands(session *discordgo.Session, config *Config) {
 			}
 
 			go func() {
-				if err := handleAIInteraction(config, s, ic, query); err != nil {
+				if err := handleAIInteraction(config, s, ic, query, ephemeral); err != nil {
 					slog.Error("Failed to handle ask command", "error", err)
 				}
 			}()
@@ -498,6 +506,20 @@ func getInteractionOptionString(ic *discordgo.InteractionCreate, name string) st
 		}
 	}
 	return ""
+}
+
+func getInteractionOptionBool(ic *discordgo.InteractionCreate, name string) bool {
+	for _, option := range ic.ApplicationCommandData().Options {
+		if option.Name == name && option.Value != nil {
+			if b, ok := option.Value.(bool); ok {
+				return b
+			}
+			if s, ok := option.Value.(string); ok {
+				return s == "true"
+			}
+		}
+	}
+	return false
 }
 
 func KillBot(session *discordgo.Session, config *Config) {

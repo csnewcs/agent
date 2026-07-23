@@ -25,10 +25,18 @@ type AIWebhookPayload struct {
 	NeedTitle     bool   `json:"needTitle,omitempty"`
 }
 
-func handleAIInteraction(config *Config, session *discordgo.Session, ic *discordgo.InteractionCreate, query string) error {
+func handleAIInteraction(config *Config, session *discordgo.Session, ic *discordgo.InteractionCreate, query string, ephemeral bool) error {
+	var responseData *discordgo.InteractionResponseData
+	if ephemeral {
+		responseData = &discordgo.InteractionResponseData{
+			Flags: discordgo.MessageFlagsEphemeral,
+		}
+	}
+
 	// Defer response immediately to avoid 3-second timeout
 	err := session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Data: responseData,
 	})
 	if err != nil {
 		return err
@@ -110,7 +118,7 @@ func handleAIInteraction(config *Config, session *discordgo.Session, ic *discord
 		_ = UpdateSessionTitle(db, getSessionID(), title)
 		slog.Info("Updated session title", "session_id", getSessionID(), "title", title)
 	}
-	err = sendSplitInteractionMessages(session, ic, responseText)
+	err = sendSplitInteractionMessages(session, ic, responseText, ephemeral)
 	return err
 }
 
@@ -278,7 +286,7 @@ func sanitizeString(s string) string {
 	return b.String()
 }
 
-func sendSplitInteractionMessages(session *discordgo.Session, ic *discordgo.InteractionCreate, text string) error {
+func sendSplitInteractionMessages(session *discordgo.Session, ic *discordgo.InteractionCreate, text string, ephemeral bool) error {
 	runes := []rune(text)
 	const maxLen = 1950
 	if len(runes) <= maxLen {
@@ -297,6 +305,11 @@ func sendSplitInteractionMessages(session *discordgo.Session, ic *discordgo.Inte
 		return err
 	}
 
+	var flags discordgo.MessageFlags
+	if ephemeral {
+		flags = discordgo.MessageFlagsEphemeral
+	}
+
 	// Send remaining parts as followups
 	remaining := runes[maxLen:]
 	for len(remaining) > 0 {
@@ -307,6 +320,7 @@ func sendSplitInteractionMessages(session *discordgo.Session, ic *discordgo.Inte
 		chunk := string(remaining[:chunkLen])
 		_, err = session.FollowupMessageCreate(ic.Interaction, true, &discordgo.WebhookParams{
 			Content: chunk,
+			Flags:   flags,
 		})
 		if err != nil {
 			slog.Error("Failed to send followup message", "error", err)
