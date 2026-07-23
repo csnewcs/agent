@@ -1,7 +1,9 @@
 services:
   kepco:
-    image: ghcr.io/noeulnight/kepco:latest
-    platform: linux/arm64
+    build:
+      context: ./kepco
+      dockerfile: Dockerfile
+    image: ghcr.io/csnewcs/agent/kepco:latest
     container_name: kepco-api
     restart: unless-stopped
     network_mode: host
@@ -14,6 +16,7 @@ services:
     build:
       context: ./bot
       dockerfile: Dockerfile
+    image: ghcr.io/csnewcs/agent/bot:latest
     container_name: discord-bot
     restart: unless-stopped
     network_mode: host

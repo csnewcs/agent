@@ -10,6 +10,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME_BOT: ghcr.io/${{ github.repository }}/bot
+  IMAGE_NAME_KEPCO: ghcr.io/${{ github.repository }}/kepco
 
 jobs:
   # --- 1. CI Code Verification ---
@@ -32,23 +33,55 @@ jobs:
           go mod download
           go build -v ./...
 
+  check-kepco:
+    name: Build & Test KEPCO API
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+          cache-dependency-path: 'kepco/pnpm-lock.yaml'
+
+      - name: Install Dependencies & Build
+        working-directory: ./kepco
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run build
+
   # --- 2. Native Multi-Arch Image Builds ---
   build-native-images:
-    name: Build Native Bot Image (${{ matrix.platform.arch }})
-    needs: [check-bot]
+    name: Build Native Docker Image (${{ matrix.platform.arch }})
+    needs: [check-bot, check-kepco]
     runs-on: ${{ matrix.platform.runs_on }}
+    container: ${{ matrix.platform.container }}
     strategy:
       fail-fast: false
       matrix:
         platform:
           - arch: amd64
-            runs_on: fedora43
+            runs_on: ubuntu-latest
+            container: fedora:43
           - arch: arm64
-            runs_on: ubuntu-24.04-arm64
+            runs_on: ubuntu-24.04-arm
+            container: null
 
     steps:
-      - name: Checkout Code
+      - name: Checkout Code (with submodules)
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -69,10 +102,20 @@ jobs:
           file: ./bot/Dockerfile
           outputs: type=image,name=${{ env.IMAGE_NAME_BOT }},push-by-digest=true,name-canonical=true,push=true
 
+      # Build and Push Kepco Image Digest
+      - name: Build & Push Kepco Digest (${{ matrix.platform.arch }})
+        id: build-kepco
+        uses: docker/build-push-action@v6
+        with:
+          context: ./kepco
+          file: ./kepco/Dockerfile
+          outputs: type=image,name=${{ env.IMAGE_NAME_KEPCO }},push-by-digest=true,name-canonical=true,push=true
+
       - name: Save Digest Artifacts
         run: |
           mkdir -p /tmp/digests
           echo "${{ steps.build-bot.outputs.digest }}" > /tmp/digests/bot-${{ matrix.platform.arch }}
+          echo "${{ steps.build-kepco.outputs.digest }}" > /tmp/digests/kepco-${{ matrix.platform.arch }}
 
       - name: Upload Digest Artifacts
         uses: actions/upload-artifact@v4
@@ -82,7 +125,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # --- 3. Merge Manifests into Multi-Arch Image ---
+  # --- 3. Merge Manifests into Multi-Arch Images ---
   merge-manifests:
     name: Combine Multi-Arch Manifests
     needs: build-native-images
@@ -114,3 +157,13 @@ jobs:
             -t ${{ env.IMAGE_NAME_BOT }}:${{ github.sha }} \
             ${{ env.IMAGE_NAME_BOT }}@${BOT_AMD64} \
             ${{ env.IMAGE_NAME_BOT }}@${BOT_ARM64}
+
+      - name: Merge & Push Kepco Multi-Arch Image (amd64 + arm64)
+        run: |
+          KEPCO_AMD64=$(cat /tmp/digests/kepco-amd64)
+          KEPCO_ARM64=$(cat /tmp/digests/kepco-arm64)
+          docker buildx imagetools create \
+            -t ${{ env.IMAGE_NAME_KEPCO }}:latest \
+            -t ${{ env.IMAGE_NAME_KEPCO }}:${{ github.sha }} \
+            ${{ env.IMAGE_NAME_KEPCO }}@${KEPCO_AMD64} \
+            ${{ env.IMAGE_NAME_KEPCO }}@${KEPCO_ARM64}
