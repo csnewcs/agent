@@ -1,8 +1,7 @@
 services:
   kepco:
-    build:
-      context: ./kepco
-      dockerfile: Dockerfile
+    image: ghcr.io/noeulnight/kepco:latest
+    platform: linux/arm64
     container_name: kepco-api
     restart: unless-stopped
     network_mode: host

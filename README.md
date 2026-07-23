@@ -9,7 +9,7 @@
 * **`bot/`**: Go 언어로 구현된 Discord 봇입니다. 
   * 사용자 멘션 또는 슬래시 커맨드를 통해 입력된 질문을 n8n Webhook으로 중계합니다.
   * 대화 내역은 PostgreSQL DB(`agent` 데이터베이스)에 영구 저장하며 최신 30개의 히스토리만 유지합니다.
-* **`kepco/`** *(Git Submodule - Upstream: `noeulnight/kepco`)*: NestJS 기반 한국전력 실시간 요금 및 사용량 조회 API 서버입니다.
+* **`kepco/`** *(Git Submodule - Upstream: `noeulnight/kepco`)*: NestJS 기반 한국전력 실시간 요금 및 사용량 조회 API 서버입니다. (Docker 환경에서는 GHCR 게시 이미지 `ghcr.io/noeulnight/kepco:latest`를 직접 불러와 사용합니다.)
 * **`docker-compose.yml`**: 로컬 DB 및 외부 API와 충돌 없이 통신하도록 `network_mode: host` 기반으로 설계된 멀티 컨테이너 오케스트레이션 정의 파일입니다.
 
 ---
