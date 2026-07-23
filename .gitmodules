@@ -1,0 +1,3 @@
+[submodule "kepco"]
+	path = kepco
+	url = https://github.com/csnewcs/kepco.git

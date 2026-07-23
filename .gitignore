@@ -1,0 +1,24 @@
+# Secret environment files (credentials)
+.env
+*/.env
+*.env
+
+# Dependency directories
+node_modules/
+**/node_modules/
+
+# Compiled outputs and build directories
+dist/
+**/dist/
+build/
+**/build/
+bot/bot
+
+# Logs
+*.log
+**/logs/
+
+# OS and IDE files
+.DS_Store
+.vscode/
+.idea/

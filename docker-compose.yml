@@ -1,0 +1,24 @@
+services:
+  kepco:
+    build:
+      context: ./kepco
+      dockerfile: Dockerfile
+    container_name: kepco-api
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - PORT=4000
+    volumes:
+      - ./kepco/.env:/app/.env
+
+  bot:
+    build:
+      context: ./bot
+      dockerfile: Dockerfile
+    container_name: discord-bot
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - kepco
+    volumes:
+      - ./bot/.env:/app/.env
