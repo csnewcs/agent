@@ -304,9 +304,6 @@ func sendSplitInteractionMessages(session *discordgo.Session, ic *discordgo.Inte
 					Label:    "전체에게 공개",
 					Style:    discordgo.PrimaryButton,
 					CustomID: "publish_ask:" + pubID,
-					Emoji: &discordgo.ComponentEmoji{
-						Name: "📢",
-					},
 				},
 			},
 		}

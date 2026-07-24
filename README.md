@@ -72,4 +72,4 @@ docker compose down
 * **`/ask`**: n8n AI Agent 워크플로우에 질문을 보내 상호작용합니다.
   * `query`: 질문 내용 (필수)
   * `session`: 세션 선택 (선택)
-  * `ephemeral`: `true`로 선택 시 나에게만 보이는 비공개 응답으로 수신 (기본값: 모두에게 공개)
+  * `ephemeral`: `false`로 지정 시 전체 공개 응답으로 전환 (기본값: `true`, 나에게만 보이는 비공개 응답)

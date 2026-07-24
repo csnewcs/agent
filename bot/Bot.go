@@ -136,7 +136,7 @@ func makeCommands(session *discordgo.Session, config *Config) {
 		AddArg(&discordgo.ApplicationCommandOption{
 			Type:        discordgo.ApplicationCommandOptionBoolean,
 			Name:        "ephemeral",
-			Description: "응답을 자신에게만 보이기 (비공개 응답)",
+			Description: "응답 비공개 여부 (기본값: true, false 지정 시 전체 공개)",
 			Required:    false,
 		}).
 		WithFunction(func(s *discordgo.Session, ic *discordgo.InteractionCreate) {
@@ -145,7 +145,7 @@ func makeCommands(session *discordgo.Session, config *Config) {
 				return
 			}
 
-			ephemeral := getInteractionOptionBool(ic, "ephemeral")
+			ephemeral := getInteractionOptionBoolWithDefault(ic, "ephemeral", true)
 
 			sessionArg := getInteractionOptionString(ic, "session")
 			if sessionArg == "new" {
@@ -510,7 +510,7 @@ func getInteractionOptionString(ic *discordgo.InteractionCreate, name string) st
 	return ""
 }
 
-func getInteractionOptionBool(ic *discordgo.InteractionCreate, name string) bool {
+func getInteractionOptionBoolWithDefault(ic *discordgo.InteractionCreate, name string, defaultValue bool) bool {
 	for _, option := range ic.ApplicationCommandData().Options {
 		if option.Name == name && option.Value != nil {
 			if b, ok := option.Value.(bool); ok {
@@ -521,7 +521,7 @@ func getInteractionOptionBool(ic *discordgo.InteractionCreate, name string) bool
 			}
 		}
 	}
-	return false
+	return defaultValue
 }
 
 func KillBot(session *discordgo.Session, config *Config) {
