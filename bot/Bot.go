@@ -506,7 +506,7 @@ func makeCommands(session *discordgo.Session, config *Config) {
 				timeStr = fmt.Sprintf("%d분 %d초", m, sec)
 			}
 
-			content := fmt.Sprintf("퇴근(오후 6시)까지 **%s** 남았습니다! 🏃‍♂️💨", timeStr)
+			content := fmt.Sprintf("퇴근(오후 6시)까지 **%s** 남았습니다.", timeStr)
 
 			err := s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
