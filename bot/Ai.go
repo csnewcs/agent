@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -286,12 +287,36 @@ func sanitizeString(s string) string {
 	return b.String()
 }
 
+var pendingPublishMap sync.Map
+
 func sendSplitInteractionMessages(session *discordgo.Session, ic *discordgo.InteractionCreate, text string, ephemeral bool) error {
 	runes := []rune(text)
 	const maxLen = 1950
+
+	var components *[]discordgo.MessageComponent
+	if ephemeral {
+		pubID := fmt.Sprintf("%d", time.Now().UnixNano())
+		pendingPublishMap.Store(pubID, text)
+
+		buttonRow := discordgo.ActionsRow{
+			Components: []discordgo.MessageComponent{
+				discordgo.Button{
+					Label:    "전체에게 공개",
+					Style:    discordgo.PrimaryButton,
+					CustomID: "publish_ask:" + pubID,
+					Emoji: &discordgo.ComponentEmoji{
+						Name: "📢",
+					},
+				},
+			},
+		}
+		components = &[]discordgo.MessageComponent{buttonRow}
+	}
+
 	if len(runes) <= maxLen {
 		_, err := session.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
-			Content: &text,
+			Content:    &text,
+			Components: components,
 		})
 		return err
 	}
@@ -318,15 +343,21 @@ func sendSplitInteractionMessages(session *discordgo.Session, ic *discordgo.Inte
 			chunkLen = len(remaining)
 		}
 		chunk := string(remaining[:chunkLen])
-		_, err = session.FollowupMessageCreate(ic.Interaction, true, &discordgo.WebhookParams{
+		remaining = remaining[chunkLen:]
+
+		params := &discordgo.WebhookParams{
 			Content: chunk,
 			Flags:   flags,
-		})
+		}
+		if len(remaining) == 0 && components != nil {
+			params.Components = *components
+		}
+
+		_, err = session.FollowupMessageCreate(ic.Interaction, true, params)
 		if err != nil {
 			slog.Error("Failed to send followup message", "error", err)
 			return err
 		}
-		remaining = remaining[chunkLen:]
 	}
 	return nil
 }

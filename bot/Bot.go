@@ -55,6 +55,8 @@ func InitBot(config *Config) (*discordgo.Session, error) {
 			RunCommand(session, interaction)
 		} else if interaction.Type == discordgo.InteractionApplicationCommandAutocomplete {
 			RunAutocomplete(session, interaction)
+		} else if interaction.Type == discordgo.InteractionMessageComponent {
+			RunComponent(session, interaction)
 		}
 	})
 
@@ -593,5 +595,49 @@ func sendSessionAutocomplete(session *discordgo.Session, ic *discordgo.Interacti
 	})
 	if err != nil {
 		slog.Error("Failed to respond to autocomplete", "error", err)
+	}
+}
+
+func RunComponent(session *discordgo.Session, ic *discordgo.InteractionCreate) {
+	customID := ic.MessageComponentData().CustomID
+	if strings.HasPrefix(customID, "publish_ask:") {
+		pubID := strings.TrimPrefix(customID, "publish_ask:")
+		var responseText string
+
+		if val, ok := pendingPublishMap.LoadAndDelete(pubID); ok {
+			if str, ok := val.(string); ok {
+				responseText = str
+			}
+		}
+
+		if responseText == "" && ic.Message != nil {
+			responseText = ic.Message.Content
+		}
+
+		if responseText == "" {
+			_ = session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseUpdateMessage,
+				Data: &discordgo.InteractionResponseData{
+					Components: []discordgo.MessageComponent{},
+				},
+			})
+			return
+		}
+
+		// 1. Remove button from the ephemeral message
+		err := session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseUpdateMessage,
+			Data: &discordgo.InteractionResponseData{
+				Components: []discordgo.MessageComponent{},
+			},
+		})
+		if err != nil {
+			slog.Error("Failed to update component interaction", "error", err)
+		}
+
+		// 2. Send original answer to the channel for everyone to see
+		if err := sendSplitChannelMessages(session, ic.ChannelID, responseText); err != nil {
+			slog.Error("Failed to publish response to channel", "error", err)
+		}
 	}
 }
