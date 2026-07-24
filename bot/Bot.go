@@ -524,7 +524,7 @@ func makeCommands(session *discordgo.Session, config *Config) {
 				isOff = (now.Weekday() == time.Saturday || now.Weekday() == time.Sunday || isHoliday)
 			}
 
-			if isOff || now.Hour() >= targetHour {
+			if isOff || (targetHour > 0 && now.Hour() >= targetHour) {
 				_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
 					Data: &discordgo.InteractionResponseData{
