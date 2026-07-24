@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -461,6 +462,67 @@ func makeCommands(session *discordgo.Session, config *Config) {
 		return
 	}
 
+	goHomeCmd, err := NewBotCommandBuilder("gohome").
+		WithDescription("KST 기준 오늘 오후 6시(퇴근)까지 남은 시간을 확인합니다.").
+		WithIntegrationTypes(&[]discordgo.ApplicationIntegrationType{
+			discordgo.ApplicationIntegrationUserInstall,
+			discordgo.ApplicationIntegrationGuildInstall,
+		}).
+		WithContexts(&[]discordgo.InteractionContextType{
+			discordgo.InteractionContextGuild,
+			discordgo.InteractionContextBotDM,
+			discordgo.InteractionContextPrivateChannel,
+		}).
+		WithFunction(func(s *discordgo.Session, ic *discordgo.InteractionCreate) {
+			kstLocation := time.FixedZone("KST", 9*3600)
+			now := time.Now().In(kstLocation)
+
+			isWeekend := now.Weekday() == time.Saturday || now.Weekday() == time.Sunday
+			isHoliday := isKoreanHoliday(now)
+			isAfter18 := now.Hour() >= 18
+
+			if isWeekend || isHoliday || isAfter18 {
+				_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{
+						Content: "오늘은 주말, 공휴일이거나 이미 퇴근 시간(18:00)이 지났습니다.",
+						Flags:   discordgo.MessageFlagsEphemeral,
+					},
+				})
+				return
+			}
+
+			target := time.Date(now.Year(), now.Month(), now.Day(), 18, 0, 0, 0, kstLocation)
+			diff := target.Sub(now)
+
+			h := int(diff.Hours())
+			m := int(diff.Minutes()) % 60
+			sec := int(diff.Seconds()) % 60
+
+			var timeStr string
+			if h > 0 {
+				timeStr = fmt.Sprintf("%d시간 %d분 %d초", h, m, sec)
+			} else {
+				timeStr = fmt.Sprintf("%d분 %d초", m, sec)
+			}
+
+			content := fmt.Sprintf("퇴근(오후 6시)까지 **%s** 남았습니다! 🏃‍♂️💨", timeStr)
+
+			err := s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: content,
+				},
+			})
+			if err != nil {
+				slog.Error("Failed to respond to gohome interaction", "error", err)
+			}
+		}).Build()
+	if err != nil {
+		slog.Error("Error occured when build command", "error", err)
+		return
+	}
+
 	// Clean up deprecated commands
 	globalCmds, err := session.ApplicationCommands(session.State.User.ID, "")
 	if err == nil {
@@ -472,7 +534,7 @@ func makeCommands(session *discordgo.Session, config *Config) {
 		}
 	}
 
-	commands := []BotCommand{pingCmd, askCmd, deleteSessionCmd, statsCmd, kepcoCmd}
+	commands := []BotCommand{pingCmd, askCmd, deleteSessionCmd, statsCmd, kepcoCmd, goHomeCmd}
 	for _, command := range commands {
 		err = command.RegisterGlobal(session)
 		if err != nil {
@@ -651,4 +713,46 @@ func RunComponent(session *discordgo.Session, ic *discordgo.InteractionCreate) {
 			_ = sendSplitChannelMessages(session, ic.ChannelID, responseText)
 		}
 	}
+}
+
+func isKoreanHoliday(t time.Time) bool {
+	// Fixed solar holidays (MM-DD)
+	fixedHolidays := map[string]bool{
+		"01-01": true, // 신정
+		"03-01": true, // 삼일절
+		"05-05": true, // 어린이날
+		"06-06": true, // 현충일
+		"08-15": true, // 광복절
+		"10-03": true, // 개천절
+		"10-09": true, // 한글날
+		"12-25": true, // 성탄절
+	}
+
+	mmdd := t.Format("01-02")
+	if fixedHolidays[mmdd] {
+		return true
+	}
+
+	// Lunar & substitute holidays (YYYY-MM-DD)
+	lunarHolidays := map[string]bool{
+		// 2025
+		"2025-01-28": true, "2025-01-29": true, "2025-01-30": true,
+		"2025-03-03": true, "2025-05-06": true,
+		"2025-10-05": true, "2025-10-06": true, "2025-10-07": true, "2025-10-08": true,
+
+		// 2026
+		"2026-02-16": true, "2026-02-17": true, "2026-02-18": true,
+		"2026-03-02": true, "2026-05-24": true, "2026-05-25": true,
+		"2026-08-17": true, "2026-09-24": true, "2026-09-25": true, "2026-09-26": true,
+		"2026-10-05": true,
+
+		// 2027
+		"2027-02-06": true, "2027-02-07": true, "2027-02-08": true, "2027-02-09": true,
+		"2027-05-13": true, "2027-08-16": true,
+		"2027-09-14": true, "2027-09-15": true, "2027-09-16": true,
+		"2027-10-04": true, "2027-10-11": true,
+	}
+
+	yyyymmdd := t.Format("2006-01-02")
+	return lunarHolidays[yyyymmdd]
 }
