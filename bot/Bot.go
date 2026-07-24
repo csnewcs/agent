@@ -614,20 +614,30 @@ func RunComponent(session *discordgo.Session, ic *discordgo.InteractionCreate) {
 			responseText = ic.Message.Content
 		}
 
+		var existingContent string
+		if ic.Message != nil {
+			existingContent = ic.Message.Content
+		}
+		if existingContent == "" {
+			existingContent = responseText
+		}
+
 		if responseText == "" {
 			_ = session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseUpdateMessage,
 				Data: &discordgo.InteractionResponseData{
+					Content:    "답변을 찾을 수 없습니다.",
 					Components: []discordgo.MessageComponent{},
 				},
 			})
 			return
 		}
 
-		// 1. Remove button from the ephemeral message
+		// 1. Remove button from the ephemeral message while preserving its text content
 		err := session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseUpdateMessage,
 			Data: &discordgo.InteractionResponseData{
+				Content:    existingContent,
 				Components: []discordgo.MessageComponent{},
 			},
 		})
@@ -635,9 +645,10 @@ func RunComponent(session *discordgo.Session, ic *discordgo.InteractionCreate) {
 			slog.Error("Failed to update component interaction", "error", err)
 		}
 
-		// 2. Send original answer to the channel for everyone to see
-		if err := sendSplitChannelMessages(session, ic.ChannelID, responseText); err != nil {
-			slog.Error("Failed to publish response to channel", "error", err)
+		// 2. Publish original answer publicly via interaction followup (works in user-install & channel contexts)
+		if err := sendSplitFollowupMessages(session, ic, responseText); err != nil {
+			slog.Error("Failed to publish response via followup, trying channel send fallback", "error", err)
+			_ = sendSplitChannelMessages(session, ic.ChannelID, responseText)
 		}
 	}
 }

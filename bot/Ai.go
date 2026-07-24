@@ -383,3 +383,28 @@ func sendSplitChannelMessages(session *discordgo.Session, channelID string, text
 	}
 	return nil
 }
+
+func sendSplitFollowupMessages(session *discordgo.Session, ic *discordgo.InteractionCreate, text string) error {
+	runes := []rune(text)
+	const maxLen = 1950
+
+	remaining := runes
+	for len(remaining) > 0 {
+		chunkLen := maxLen
+		if len(remaining) < chunkLen {
+			chunkLen = len(remaining)
+		}
+		chunk := string(remaining[:chunkLen])
+		remaining = remaining[chunkLen:]
+
+		_, err := session.FollowupMessageCreate(ic.Interaction, true, &discordgo.WebhookParams{
+			Content: chunk,
+			Flags:   0,
+		})
+		if err != nil {
+			slog.Error("Failed to send public followup message", "error", err)
+			return err
+		}
+	}
+	return nil
+}
