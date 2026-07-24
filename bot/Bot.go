@@ -463,7 +463,7 @@ func makeCommands(session *discordgo.Session, config *Config) {
 	}
 
 	goHomeCmd, err := NewBotCommandBuilder("gohome").
-		WithDescription("KST 기준 오늘 오후 6시(퇴근)까지 남은 시간을 확인합니다.").
+		WithDescription("오늘 퇴근까지 남은 시간을 알려줍니다.").
 		WithIntegrationTypes(&[]discordgo.ApplicationIntegrationType{
 			discordgo.ApplicationIntegrationUserInstall,
 			discordgo.ApplicationIntegrationGuildInstall,
@@ -506,7 +506,7 @@ func makeCommands(session *discordgo.Session, config *Config) {
 				timeStr = fmt.Sprintf("%d분 %d초", m, sec)
 			}
 
-			content := fmt.Sprintf("퇴근(오후 6시)까지 **%s** 남았습니다.", timeStr)
+			content := fmt.Sprintf("퇴근: %s", timeStr)
 
 			err := s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
