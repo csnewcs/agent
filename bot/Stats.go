@@ -123,10 +123,12 @@ func collectPingStats() string {
 	}
 	lines := strings.Split(string(out), "\n")
 	for _, line := range lines {
-		if strings.Contains(line, "rtt min/avg/max/mdev") {
+		if strings.Contains(line, "min/avg/max") {
 			parts := strings.Split(line, " = ")
 			if len(parts) == 2 {
-				rtts := strings.Split(strings.TrimSuffix(parts[1], " ms"), "/")
+				raw := strings.TrimSpace(parts[1])
+				raw = strings.TrimSuffix(raw, " ms")
+				rtts := strings.Split(raw, "/")
 				if len(rtts) >= 3 {
 					return fmt.Sprintf("```\nAvg RTT: %s ms\nMin RTT: %s ms\nMax RTT: %s ms\n```", rtts[1], rtts[0], rtts[2])
 				}
