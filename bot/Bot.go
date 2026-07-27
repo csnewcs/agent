@@ -603,8 +603,8 @@ func makeCommands(session *discordgo.Session, config *Config) {
 					resultText = "(출력 없음)"
 				}
 
-				if len(resultText) > 1900 {
-					resultText = resultText[:1900] + "\n... (일부 출력 생략됨)"
+				if len(resultText) > 1850 {
+					resultText = resultText[:500] + "\n\n... (중간 출력 생략됨) ...\n\n" + resultText[len(resultText)-1350:]
 				}
 
 				formattedContent := fmt.Sprintf("```\n$ %s\n\n%s\n```", cmdStr, resultText)
