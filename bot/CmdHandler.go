@@ -98,6 +98,16 @@ func buildCmdEmbedAndComponents(cmdStr string, lastLines string, isFinished bool
 	return []*discordgo.MessageEmbed{embed}, components
 }
 
+func getUserID(ic *discordgo.InteractionCreate) string {
+	if ic.User != nil {
+		return ic.User.ID
+	}
+	if ic.Member != nil && ic.Member.User != nil {
+		return ic.Member.User.ID
+	}
+	return ""
+}
+
 func handleCCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 	cmdStr := getInteractionOptionString(ic, "command")
 
@@ -105,10 +115,7 @@ func handleCCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	})
 
-	ownerID := ic.User.ID
-	if ic.Member != nil && ic.Member.User != nil {
-		ownerID = ic.Member.User.ID
-	}
+	ownerID := getUserID(ic)
 
 	sessionID := fmt.Sprintf("%d", time.Now().UnixNano())
 
@@ -211,10 +218,7 @@ func HandleCmdComponent(session *discordgo.Session, ic *discordgo.InteractionCre
 
 	cmdSession := val.(*CmdSession)
 
-	userID := ic.User.ID
-	if ic.Member != nil && ic.Member.User != nil {
-		userID = ic.Member.User.ID
-	}
+	userID := getUserID(ic)
 
 	if userID != cmdSession.OwnerID {
 		_ = session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
@@ -279,10 +283,7 @@ func HandleCmdModalSubmit(session *discordgo.Session, ic *discordgo.InteractionC
 
 	cmdSession := val.(*CmdSession)
 
-	userID := ic.User.ID
-	if ic.Member != nil && ic.Member.User != nil {
-		userID = ic.Member.User.ID
-	}
+	userID := getUserID(ic)
 
 	if userID != cmdSession.OwnerID {
 		_ = session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
