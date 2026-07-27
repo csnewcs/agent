@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,6 +58,8 @@ func InitBot(config *Config) (*discordgo.Session, error) {
 			RunAutocomplete(session, interaction)
 		} else if interaction.Type == discordgo.InteractionMessageComponent {
 			RunComponent(session, interaction)
+		} else if interaction.Type == discordgo.InteractionModalSubmit {
+			RunModalSubmit(session, interaction)
 		}
 	})
 
@@ -584,39 +585,8 @@ func makeCommands(session *discordgo.Session, config *Config) {
 			Description: "실행할 리눅스 커맨드",
 			Required:    true,
 		}).
-		WithFunction(func(s *discordgo.Session, ic *discordgo.InteractionCreate) {
-			cmdStr := getInteractionOptionString(ic, "command")
-
-			_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-			})
-
-			go func() {
-				execCmd := exec.Command("nsenter", "-t", "1", "-m", "-u", "-n", "-i", "bash", "-c", cmdStr)
-				execCmd.Stdin = strings.NewReader("")
-				out, err := execCmd.CombinedOutput()
-				resultText := string(out)
-
-				if err != nil && resultText == "" {
-					resultText = fmt.Sprintf("Error: %v", err)
-				} else if resultText == "" {
-					resultText = "(출력 없음)"
-				}
-
-				if len(resultText) > 1850 {
-					resultText = resultText[:500] + "\n\n... (중간 출력 생략됨) ...\n\n" + resultText[len(resultText)-1350:]
-				}
-
-				formattedContent := fmt.Sprintf("```\n$ %s\n\n%s\n```", cmdStr, resultText)
-
-				_, editErr := s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
-					Content: &formattedContent,
-				})
-				if editErr != nil {
-					slog.Error("Failed to edit interaction response for /c", "error", editErr)
-				}
-			}()
-		}).Build()
+		WithFunction(handleCCommand).
+		Build()
 	if err != nil {
 		slog.Error("Error occured when build command", "error", err)
 		return
@@ -761,6 +731,11 @@ func sendSessionAutocomplete(session *discordgo.Session, ic *discordgo.Interacti
 
 func RunComponent(session *discordgo.Session, ic *discordgo.InteractionCreate) {
 	customID := ic.MessageComponentData().CustomID
+	if strings.HasPrefix(customID, "c_input:") || strings.HasPrefix(customID, "c_stop:") {
+		HandleCmdComponent(session, ic)
+		return
+	}
+
 	if strings.HasPrefix(customID, "publish_ask:") {
 		pubID := strings.TrimPrefix(customID, "publish_ask:")
 		var responseText string
@@ -811,6 +786,13 @@ func RunComponent(session *discordgo.Session, ic *discordgo.InteractionCreate) {
 			slog.Error("Failed to publish response via followup, trying channel send fallback", "error", err)
 			_ = sendSplitChannelMessages(session, ic.ChannelID, responseText)
 		}
+	}
+}
+
+func RunModalSubmit(session *discordgo.Session, ic *discordgo.InteractionCreate) {
+	customID := ic.ModalSubmitData().CustomID
+	if strings.HasPrefix(customID, "c_modal:") {
+		HandleCmdModalSubmit(session, ic)
 	}
 }
 
