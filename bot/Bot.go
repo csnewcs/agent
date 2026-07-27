@@ -593,6 +593,7 @@ func makeCommands(session *discordgo.Session, config *Config) {
 
 			go func() {
 				execCmd := exec.Command("nsenter", "-t", "1", "-m", "-u", "-n", "-i", "bash", "-c", cmdStr)
+				execCmd.Stdin = strings.NewReader("")
 				out, err := execCmd.CombinedOutput()
 				resultText := string(out)
 
