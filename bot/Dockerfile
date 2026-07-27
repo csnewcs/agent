@@ -21,8 +21,8 @@ FROM alpine:latest
 
 WORKDIR /app
 
-# Install CA certificates for secure connections
-RUN apk add --no-cache ca-certificates
+# Install CA certificates and util-linux for nsenter host command execution
+RUN apk add --no-cache ca-certificates util-linux bash
 
 # Copy binary from builder
 COPY --from=builder /app/bot ./bot

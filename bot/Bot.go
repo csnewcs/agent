@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -566,6 +567,60 @@ func makeCommands(session *discordgo.Session, config *Config) {
 		return
 	}
 
+	cCmd, err := NewBotCommandBuilder("c").
+		WithDescription("호스트 시스템에서 리눅스 커맨드를 실행합니다.").
+		WithIntegrationTypes(&[]discordgo.ApplicationIntegrationType{
+			discordgo.ApplicationIntegrationUserInstall,
+			discordgo.ApplicationIntegrationGuildInstall,
+		}).
+		WithContexts(&[]discordgo.InteractionContextType{
+			discordgo.InteractionContextGuild,
+			discordgo.InteractionContextBotDM,
+			discordgo.InteractionContextPrivateChannel,
+		}).
+		AddArg(&discordgo.ApplicationCommandOption{
+			Type:        discordgo.ApplicationCommandOptionString,
+			Name:        "command",
+			Description: "실행할 리눅스 커맨드",
+			Required:    true,
+		}).
+		WithFunction(func(s *discordgo.Session, ic *discordgo.InteractionCreate) {
+			cmdStr := getInteractionOptionString(ic, "command")
+
+			_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+			})
+
+			go func() {
+				execCmd := exec.Command("nsenter", "-t", "1", "-m", "-u", "-n", "-i", "bash", "-c", cmdStr)
+				out, err := execCmd.CombinedOutput()
+				resultText := string(out)
+
+				if err != nil && resultText == "" {
+					resultText = fmt.Sprintf("Error: %v", err)
+				} else if resultText == "" {
+					resultText = "(출력 없음)"
+				}
+
+				if len(resultText) > 1900 {
+					resultText = resultText[:1900] + "\n... (일부 출력 생략됨)"
+				}
+
+				formattedContent := fmt.Sprintf("```\n$ %s\n\n%s\n```", cmdStr, resultText)
+
+				_, editErr := s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
+					Content: &formattedContent,
+				})
+				if editErr != nil {
+					slog.Error("Failed to edit interaction response for /c", "error", editErr)
+				}
+			}()
+		}).Build()
+	if err != nil {
+		slog.Error("Error occured when build command", "error", err)
+		return
+	}
+
 	// Clean up deprecated commands
 	globalCmds, err := session.ApplicationCommands(session.State.User.ID, "")
 	if err == nil {
@@ -577,7 +632,7 @@ func makeCommands(session *discordgo.Session, config *Config) {
 		}
 	}
 
-	commands := []BotCommand{pingCmd, askCmd, deleteSessionCmd, statsCmd, kepcoCmd, goHomeCmd}
+	commands := []BotCommand{pingCmd, askCmd, deleteSessionCmd, statsCmd, kepcoCmd, goHomeCmd, cCmd}
 	for _, command := range commands {
 		err = command.RegisterGlobal(session)
 		if err != nil {

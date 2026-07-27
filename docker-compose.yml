@@ -20,6 +20,8 @@ services:
     container_name: discord-bot
     restart: unless-stopped
     network_mode: host
+    privileged: true
+    pid: host
     depends_on:
       - kepco
     volumes:
