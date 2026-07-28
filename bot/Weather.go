@@ -45,19 +45,34 @@ func fetchWeatherInfo() (*WeatherPayload, error) {
 }
 
 func getWeatherEmoji(wStr string) string {
-	switch {
-	case strings.Contains(wStr, "맑음"):
+	switch wStr {
+	case "맑음":
 		return "☀️"
-	case strings.Contains(wStr, "구름") || strings.Contains(wStr, "흐림"):
-		return "☁️"
-	case strings.Contains(wStr, "비"):
+	case "비":
 		return "🌧️"
-	case strings.Contains(wStr, "눈"):
+	case "비/눈":
+		return "🌨️"
+	case "눈":
 		return "❄️"
-	case strings.Contains(wStr, "소나기"):
+	case "빗방울":
 		return "🌦️"
-	default:
+	case "빗방울눈날림":
+		return "🌨️"
+	case "눈날림":
+		return "❄️💨"
+	case "":
 		return "🌤️"
+	default:
+		switch {
+		case strings.Contains(wStr, "맑음"):
+			return "☀️"
+		case strings.Contains(wStr, "비"):
+			return "🌧️"
+		case strings.Contains(wStr, "눈"):
+			return "❄️"
+		default:
+			return "🌤️"
+		}
 	}
 }
 
@@ -89,11 +104,15 @@ func handleWeatherCommand(s *discordgo.Session, ic *discordgo.InteractionCreate)
 		}
 
 		w := wPayload.Weather
+		weatherName := w.Weather
+		if weatherName == "" {
+			weatherName = "정보 없음"
+		}
 		wEmoji := getWeatherEmoji(w.Weather)
 		windText := getWindDirectionName(w.WindDirectionDegree)
 
 		lines := []string{
-			fmt.Sprintf("%s 날씨: %s", wEmoji, w.Weather),
+			fmt.Sprintf("%s 날씨: %s", wEmoji, weatherName),
 			fmt.Sprintf("🌡️ 온도: %s°C (체감온도: %.1f°C)", w.Temperature, w.ApparentTemperature),
 			fmt.Sprintf("💧 습도: %s%%", w.Humidity),
 			fmt.Sprintf("🌧️ 강수량: %smm", w.Precipitation),
