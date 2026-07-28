@@ -27,10 +27,11 @@ type AIWebhookPayload struct {
 }
 
 func handleAIInteraction(config *Config, session *discordgo.Session, ic *discordgo.InteractionCreate, query string, userEphemeral bool, hasEphemeralOpt bool) error {
-	// Defer ephemerally unless user explicitly specified ephemeral: false
-	deferEphemeral := true
-	if hasEphemeralOpt && !userEphemeral {
-		deferEphemeral = false
+	// 사용자가 명시적으로 ephemeral: true로 지정한 경우에만 비공개로 대기 상태를 생성.
+	// 기본값(옵션 미지정 또는 ephemeral: false)인 경우 "생각 중..." 대기 상태를 채널에 공개로 생성.
+	deferEphemeral := false
+	if hasEphemeralOpt && userEphemeral {
+		deferEphemeral = true
 	}
 
 	var responseData *discordgo.InteractionResponseData
@@ -141,19 +142,16 @@ func handleAIInteraction(config *Config, session *discordgo.Session, ic *discord
 		}
 	}
 
-	if deferEphemeral && !isFinalEphemeral {
-		// 비공개로 대기 상태를 생성했으나 최종 출력이 100자 이하로 전체 공개인 경우:
-		// 대기 메시지를 안내 문구로 갱신하고 채널에 공개적으로 답변을 발송
-		noticeText := "답변이 채널에 공개되었습니다."
+	if !deferEphemeral && isFinalEphemeral {
+		// 채널에 공개로 "생각 중..."을 표시했으나 최종 답변이 100자를 초과하여 비공개인 경우:
+		// 1. 공개 대기 메시지에는 "100자 초과로 비공개 전달" 안내를 남김 (명령어 클릭/내역 유지)
+		// 2. 실제 답변은 질문자 본인만 볼 수 있는 비공개 팔로우업 메시지로 전송 ("전체에게 공개" 버튼 포함)
+		noticeText := "답변 길이가 100자를 초과하여 질문자 본인에게만 보이는 메시지로 전달되었습니다."
 		_, _ = session.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
 			Content: &noticeText,
 		})
 
-		if err := sendSplitFollowupMessages(session, ic, responseText); err != nil {
-			slog.Error("Failed to publish response via followup, trying channel send fallback", "error", err)
-			return sendSplitChannelMessages(session, ic.ChannelID, responseText)
-		}
-		return nil
+		return sendSplitEphemeralFollowup(session, ic, responseText)
 	}
 
 	return sendSplitInteractionMessages(session, ic, responseText, isFinalEphemeral)
@@ -439,6 +437,50 @@ func sendSplitFollowupMessages(session *discordgo.Session, ic *discordgo.Interac
 		})
 		if err != nil {
 			slog.Error("Failed to send public followup message", "error", err)
+			return err
+		}
+	}
+	return nil
+}
+
+func sendSplitEphemeralFollowup(session *discordgo.Session, ic *discordgo.InteractionCreate, text string) error {
+	pubID := fmt.Sprintf("%d", time.Now().UnixNano())
+	pendingPublishMap.Store(pubID, text)
+
+	buttonRow := discordgo.ActionsRow{
+		Components: []discordgo.MessageComponent{
+			discordgo.Button{
+				Label:    "전체에게 공개",
+				Style:    discordgo.PrimaryButton,
+				CustomID: "publish_ask:" + pubID,
+			},
+		},
+	}
+	components := []discordgo.MessageComponent{buttonRow}
+
+	runes := []rune(text)
+	const maxLen = 1950
+
+	remaining := runes
+	for len(remaining) > 0 {
+		chunkLen := maxLen
+		if len(remaining) < chunkLen {
+			chunkLen = len(remaining)
+		}
+		chunk := string(remaining[:chunkLen])
+		remaining = remaining[chunkLen:]
+
+		params := &discordgo.WebhookParams{
+			Content: chunk,
+			Flags:   discordgo.MessageFlagsEphemeral,
+		}
+		if len(remaining) == 0 {
+			params.Components = components
+		}
+
+		_, err := session.FollowupMessageCreate(ic.Interaction, true, params)
+		if err != nil {
+			slog.Error("Failed to send ephemeral followup message", "error", err)
 			return err
 		}
 	}
