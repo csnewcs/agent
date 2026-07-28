@@ -36,7 +36,12 @@ func (b *SafeBuffer) GetLastLines(n int) string {
 	if len(lines) > n {
 		lines = lines[len(lines)-n:]
 	}
-	return strings.Join(lines, "\n")
+	res := strings.Join(lines, "\n")
+	runes := []rune(res)
+	if len(runes) > 990 {
+		res = "..." + string(runes[len(runes)-987:])
+	}
+	return res
 }
 
 type CmdSession struct {
@@ -63,6 +68,16 @@ func buildCmdEmbedAndComponents(cmdStr string, lastLines string, isFinished bool
 			title = "리눅스 커맨드 실행 완료"
 			color = 0x2ecc71
 		}
+	}
+
+	cmdRunes := []rune(cmdStr)
+	if len(cmdRunes) > 990 {
+		cmdStr = string(cmdRunes[:987]) + "..."
+	}
+
+	lastLinesRunes := []rune(lastLines)
+	if len(lastLinesRunes) > 990 {
+		lastLines = "..." + string(lastLinesRunes[len(lastLinesRunes)-987:])
 	}
 
 	embed := &discordgo.MessageEmbed{
@@ -218,6 +233,7 @@ func handleCCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 
 func HandleCmdComponent(session *discordgo.Session, ic *discordgo.InteractionCreate) {
 	customID := ic.MessageComponentData().CustomID
+	slog.Info("CmdComponent interaction received", "custom_id", customID)
 
 	var sessionID string
 	var action string
@@ -233,6 +249,7 @@ func HandleCmdComponent(session *discordgo.Session, ic *discordgo.InteractionCre
 
 	val, ok := activeCmdMap.Load(sessionID)
 	if !ok {
+		slog.Warn("Cmd session not found or already finished", "session_id", sessionID)
 		_ = session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
@@ -246,8 +263,8 @@ func HandleCmdComponent(session *discordgo.Session, ic *discordgo.InteractionCre
 	cmdSession := val.(*CmdSession)
 
 	userID := getUserID(ic)
-
-	if userID != cmdSession.OwnerID {
+	if userID != cmdSession.OwnerID && cmdSession.OwnerID != "" {
+		slog.Warn("Cmd interaction user mismatch", "user_id", userID, "owner_id", cmdSession.OwnerID)
 		_ = session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
@@ -259,7 +276,7 @@ func HandleCmdComponent(session *discordgo.Session, ic *discordgo.InteractionCre
 	}
 
 	if action == "input" {
-		_ = session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+		err := session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseModal,
 			Data: &discordgo.InteractionResponseData{
 				CustomID: "c_modal:" + sessionID,
@@ -279,19 +296,31 @@ func HandleCmdComponent(session *discordgo.Session, ic *discordgo.InteractionCre
 				},
 			},
 		})
+		if err != nil {
+			slog.Error("Failed to open stdin modal", "error", err)
+		}
 	} else if action == "stop" {
+		slog.Info("Stopping command session", "session_id", sessionID)
 		cmdSession.IsKilled.Store(true)
 		if cmdSession.Cmd != nil && cmdSession.Cmd.Process != nil {
-			_ = cmdSession.Cmd.Process.Kill()
+			err := cmdSession.Cmd.Process.Kill()
+			if err != nil {
+				slog.Error("Failed to kill process", "error", err)
+			}
 		}
-		_ = session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+		err := session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseDeferredMessageUpdate,
 		})
+		if err != nil {
+			slog.Error("Failed to respond to stop button interaction", "error", err)
+		}
 	}
 }
 
 func HandleCmdModalSubmit(session *discordgo.Session, ic *discordgo.InteractionCreate) {
 	customID := ic.ModalSubmitData().CustomID
+	slog.Info("CmdModalSubmit interaction received", "custom_id", customID)
+
 	if !strings.HasPrefix(customID, "c_modal:") {
 		return
 	}
@@ -312,8 +341,7 @@ func HandleCmdModalSubmit(session *discordgo.Session, ic *discordgo.InteractionC
 	cmdSession := val.(*CmdSession)
 
 	userID := getUserID(ic)
-
-	if userID != cmdSession.OwnerID {
+	if userID != cmdSession.OwnerID && cmdSession.OwnerID != "" {
 		_ = session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
@@ -336,7 +364,12 @@ func HandleCmdModalSubmit(session *discordgo.Session, ic *discordgo.InteractionC
 	}
 
 	if cmdSession.Stdin != nil {
-		_, _ = cmdSession.Stdin.Write([]byte(inputText + "\n"))
+		_, err := cmdSession.Stdin.Write([]byte(inputText + "\n"))
+		if err != nil {
+			slog.Error("Failed to write to stdin pipe", "error", err)
+		} else {
+			slog.Info("Wrote text to stdin pipe", "session_id", sessionID, "len", len(inputText))
+		}
 	}
 
 	_ = session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
