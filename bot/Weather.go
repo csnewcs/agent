@@ -44,23 +44,6 @@ func fetchWeatherInfo() (*WeatherPayload, error) {
 	return &payload, nil
 }
 
-func getWeatherTheme(wStr string) (string, int) {
-	switch {
-	case strings.Contains(wStr, "맑음"):
-		return "☀️", 0xF1C40F // Amber Gold
-	case strings.Contains(wStr, "구름") || strings.Contains(wStr, "흐림"):
-		return "☁️", 0x95A5A6 // Muted Gray
-	case strings.Contains(wStr, "비"):
-		return "🌧️", 0x3498DB // Ocean Blue
-	case strings.Contains(wStr, "눈"):
-		return "❄️", 0x00D2D3 // Cyan White
-	case strings.Contains(wStr, "소나기"):
-		return "🌦️", 0x2980B9 // Deep Blue
-	default:
-		return "🌤️", 0x3498DB
-	}
-}
-
 func getWindDirectionName(degStr string) string {
 	var deg float64
 	_, err := fmt.Sscan(degStr, &deg)
@@ -70,23 +53,6 @@ func getWindDirectionName(degStr string) string {
 	directions := []string{"북풍", "북동풍", "동풍", "남동풍", "남풍", "남서풍", "서풍", "북서풍"}
 	idx := int((deg + 22.5) / 45.0) % 8
 	return fmt.Sprintf("%.0f° (%s)", deg, directions[idx])
-}
-
-func makeHumidityBar(humStr string) string {
-	var h float64
-	_, err := fmt.Sscan(humStr, &h)
-	if err != nil {
-		return humStr + "%"
-	}
-	filled := int(h / 10.0)
-	if filled > 10 {
-		filled = 10
-	}
-	if filled < 0 {
-		filled = 0
-	}
-	empty := 10 - filled
-	return fmt.Sprintf("[%s%s] %.0f%%", strings.Repeat("█", filled), strings.Repeat("░", empty), h)
 }
 
 func handleWeatherCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
@@ -106,37 +72,21 @@ func handleWeatherCommand(s *discordgo.Session, ic *discordgo.InteractionCreate)
 		}
 
 		w := wPayload.Weather
-		emoji, color := getWeatherTheme(w.Weather)
 		windText := getWindDirectionName(w.WindDirectionDegree)
-		humidityBar := makeHumidityBar(w.Humidity)
 
-		descHeader := fmt.Sprintf("### %s **%s°C** · %s\n> 🌡️ 체감 **%.1f°C**  │  💧 습도 **%s%%**",
-			emoji, w.Temperature, w.Weather, w.ApparentTemperature, w.Humidity)
-
-		dashboardBlock := fmt.Sprintf("```text\n"+
-			"┌──────────────────────────────────────────────┐\n"+
-			"│ 🌡️ 기  온 │ %-32s │\n"+
-			"│ 💧 습  도 │ %-32s │\n"+
-			"│ 🌧️ 강수량 │ %-32s │\n"+
-			"│ 💨 풍  속 │ %-32s │\n"+
-			"│ 🧭 풍  향 │ %-32s │\n"+
-			"└──────────────────────────────────────────────┘\n"+
-			"```",
-			fmt.Sprintf("%s °C (체감 %.1f °C)", w.Temperature, w.ApparentTemperature),
-			humidityBar,
-			fmt.Sprintf("%s mm", w.Precipitation),
-			fmt.Sprintf("%s m/s", w.WindSpeed),
-			windText,
-		)
+		lines := []string{
+			fmt.Sprintf("날씨: %s", w.Weather),
+			fmt.Sprintf("온도: %s°C (체감온도: %.1f°C)", w.Temperature, w.ApparentTemperature),
+			fmt.Sprintf("습도: %s%%", w.Humidity),
+			fmt.Sprintf("강수량: %smm", w.Precipitation),
+			fmt.Sprintf("풍속: %sm/s (풍향: %s)", w.WindSpeed, windText),
+		}
 
 		embed := &discordgo.MessageEmbed{
-			Title:       fmt.Sprintf("%s 실시간 기상 상태 브리핑", emoji),
-			Description: descHeader + "\n\n" + dashboardBlock,
-			Color:       color,
-			Footer: &discordgo.MessageEmbedFooter{
-				Text: "실시간 기상 모니터링",
-			},
-			Timestamp: time.Now().Format(time.RFC3339),
+			Title:       "실시간 날씨 정보",
+			Description: strings.Join(lines, "\n"),
+			Color:       0x3498db,
+			Timestamp:   time.Now().Format(time.RFC3339),
 		}
 
 		embeds := []*discordgo.MessageEmbed{embed}
