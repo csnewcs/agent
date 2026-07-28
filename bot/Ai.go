@@ -26,9 +26,15 @@ type AIWebhookPayload struct {
 	NeedTitle     bool   `json:"needTitle,omitempty"`
 }
 
-func handleAIInteraction(config *Config, session *discordgo.Session, ic *discordgo.InteractionCreate, query string, ephemeral bool) error {
+func handleAIInteraction(config *Config, session *discordgo.Session, ic *discordgo.InteractionCreate, query string, userEphemeral bool, hasEphemeralOpt bool) error {
+	// Defer ephemerally unless user explicitly specified ephemeral: false
+	deferEphemeral := true
+	if hasEphemeralOpt && !userEphemeral {
+		deferEphemeral = false
+	}
+
 	var responseData *discordgo.InteractionResponseData
-	if ephemeral {
+	if deferEphemeral {
 		responseData = &discordgo.InteractionResponseData{
 			Flags: discordgo.MessageFlagsEphemeral,
 		}
@@ -119,8 +125,38 @@ func handleAIInteraction(config *Config, session *discordgo.Session, ic *discord
 		_ = UpdateSessionTitle(db, getSessionID(), title)
 		slog.Info("Updated session title", "session_id", getSessionID(), "title", title)
 	}
-	err = sendSplitInteractionMessages(session, ic, responseText, ephemeral)
-	return err
+
+	// 100자 기준 공개 전략 결정:
+	// - 옵션이 명시된 경우: 사용자의 옵션 설정 준수
+	// - 옵션 미지정 시: 출력 길이 <= 100자 -> 전체 공개(ephemeral=false), > 100자 -> 비공개(ephemeral=true)
+	isFinalEphemeral := false
+	if hasEphemeralOpt {
+		isFinalEphemeral = userEphemeral
+	} else {
+		outputLen := len([]rune(responseText))
+		if outputLen > 100 {
+			isFinalEphemeral = true
+		} else {
+			isFinalEphemeral = false
+		}
+	}
+
+	if deferEphemeral && !isFinalEphemeral {
+		// 비공개로 대기 상태를 생성했으나 최종 출력이 100자 이하로 전체 공개인 경우:
+		// 대기 메시지를 안내 문구로 갱신하고 채널에 공개적으로 답변을 발송
+		noticeText := "답변이 채널에 공개되었습니다."
+		_, _ = session.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
+			Content: &noticeText,
+		})
+
+		if err := sendSplitFollowupMessages(session, ic, responseText); err != nil {
+			slog.Error("Failed to publish response via followup, trying channel send fallback", "error", err)
+			return sendSplitChannelMessages(session, ic.ChannelID, responseText)
+		}
+		return nil
+	}
+
+	return sendSplitInteractionMessages(session, ic, responseText, isFinalEphemeral)
 }
 
 func handleAIRequest(config *Config, session *discordgo.Session, message *discordgo.MessageCreate, query string) error {
