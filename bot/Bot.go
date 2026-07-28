@@ -587,6 +587,19 @@ func makeCommands(session *discordgo.Session, config *Config) {
 		}).
 		WithFunction(handleCCommand).
 		Build()
+	weatherCmd, err := NewBotCommandBuilder("weather").
+		WithDescription("실시간 날씨 정보를 조회합니다.").
+		WithIntegrationTypes(&[]discordgo.ApplicationIntegrationType{
+			discordgo.ApplicationIntegrationUserInstall,
+			discordgo.ApplicationIntegrationGuildInstall,
+		}).
+		WithContexts(&[]discordgo.InteractionContextType{
+			discordgo.InteractionContextGuild,
+			discordgo.InteractionContextBotDM,
+			discordgo.InteractionContextPrivateChannel,
+		}).
+		WithFunction(handleWeatherCommand).
+		Build()
 	if err != nil {
 		slog.Error("Error occured when build command", "error", err)
 		return
@@ -603,7 +616,7 @@ func makeCommands(session *discordgo.Session, config *Config) {
 		}
 	}
 
-	commands := []BotCommand{pingCmd, askCmd, deleteSessionCmd, statsCmd, kepcoCmd, goHomeCmd, cCmd}
+	commands := []BotCommand{pingCmd, askCmd, deleteSessionCmd, statsCmd, kepcoCmd, goHomeCmd, cCmd, weatherCmd}
 	for _, command := range commands {
 		err = command.RegisterGlobal(session)
 		if err != nil {
