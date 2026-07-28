@@ -27,11 +27,16 @@ type AIWebhookPayload struct {
 }
 
 func handleAIInteraction(config *Config, session *discordgo.Session, ic *discordgo.InteractionCreate, query string, userEphemeral bool, hasEphemeralOpt bool) error {
-	// 사용자가 명시적으로 ephemeral: true로 지정한 경우에만 비공개로 대기 상태를 생성.
-	// 기본값(옵션 미지정 또는 ephemeral: false)인 경우 "생각 중..." 대기 상태를 채널에 공개로 생성.
-	deferEphemeral := false
-	if hasEphemeralOpt && userEphemeral {
-		deferEphemeral = true
+	// Discord API 규격:
+	// 공개(Public)로 생성된 Interaction에는 비공개(Ephemeral) Followup 메시지를 전송할 수 없으며 (HTTP 400 Invalid Form Body),
+	// 공개 대기 메시지를 삭제할 경우 디스코드 UI에 "Interaction Failed (상호작용 실패)" 오류가 표시됩니다.
+	//
+	// 따라서 기본 대기 상태를 비공개(Ephemeral)로 생성한 후:
+	// 1. 답변이 100자 이하 (공개): 비공개 대기 메시지를 삭제하고 채널에 전체 공개(Followup) 메시지로 답변 발송
+	// 2. 답변이 100자 초과 (비공개): 비공개 대기 메시지에 답변 본문 + [전체에게 공개] 버튼을 표시
+	deferEphemeral := true
+	if hasEphemeralOpt && !userEphemeral {
+		deferEphemeral = false
 	}
 
 	var responseData *discordgo.InteractionResponseData
@@ -142,8 +147,14 @@ func handleAIInteraction(config *Config, session *discordgo.Session, ic *discord
 		}
 	}
 
+	if deferEphemeral && !isFinalEphemeral {
+		// 100자 이하로 전체 공개되어야 하는 경우:
+		// 비공개 대기 메시지를 삭제하고 채널에 공개 Followup으로 답변 발송
+		_ = session.InteractionResponseDelete(ic.Interaction)
+		return sendSplitFollowupMessages(session, ic, responseText)
+	}
+
 	if !deferEphemeral && isFinalEphemeral {
-		// 채널에 공개로 표시했던 "생각 중..." 대기 메시지를 즉시 삭제하고 비공개 팔로우업으로 답변 전송
 		_ = session.InteractionResponseDelete(ic.Interaction)
 		return sendSplitEphemeralFollowup(session, ic, responseText)
 	}

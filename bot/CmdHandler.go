@@ -154,10 +154,24 @@ func handleCCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 	if err := execCmd.Start(); err != nil {
 		activeCmdMap.Delete(sessionID)
 		errMsg := fmt.Sprintf("Failed to start command: %v", err)
-		_, _ = s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
+		_, editErr := s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
 			Content: &errMsg,
 		})
+		if editErr != nil {
+			slog.Error("Failed to edit interaction response on start error", "error", editErr)
+		}
 		return
+	}
+
+	// 명령어 시작 직후 즉시 첫 임베드를 전송하여 디스코드에 "생각 중..." 대기가 길어지지 않게 함
+	initialLastLines := buf.GetLastLines(10)
+	initialEmbeds, initialComponents := buildCmdEmbedAndComponents(cmdStr, initialLastLines, false, false, sessionID)
+	_, editErr := s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
+		Embeds:     &initialEmbeds,
+		Components: &initialComponents,
+	})
+	if editErr != nil {
+		slog.Error("Failed to send initial /c interaction response edit", "error", editErr)
 	}
 
 	go func() {
@@ -178,19 +192,25 @@ func handleCCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 				isFailed := (err != nil) || cmdSession.IsKilled.Load()
 				lastLines := buf.GetLastLines(10)
 				embeds, components := buildCmdEmbedAndComponents(cmdStr, lastLines, true, isFailed, sessionID)
-				_, _ = s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
+				_, editErr := s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
 					Embeds:     &embeds,
 					Components: &components,
 				})
+				if editErr != nil {
+					slog.Error("Failed to send final /c interaction response edit", "error", editErr)
+				}
 				return
 
 			case <-ticker.C:
 				lastLines := buf.GetLastLines(10)
 				embeds, components := buildCmdEmbedAndComponents(cmdStr, lastLines, false, false, sessionID)
-				_, _ = s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
+				_, editErr := s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
 					Embeds:     &embeds,
 					Components: &components,
 				})
+				if editErr != nil {
+					slog.Error("Failed to send ticker /c interaction response edit", "error", editErr)
+				}
 			}
 		}
 	}()
