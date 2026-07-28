@@ -97,7 +97,8 @@ func getKMAObservationTime(now time.Time) time.Time {
 	year, month, day := nowKST.Date()
 	hour := nowKST.Hour()
 
-	if nowKST.Minute() < 30 {
+	// 기상청 초단기실황은 매시 30분 관측 데이터가 매시 40분에 API로 배포됨
+	if nowKST.Minute() < 40 {
 		hour--
 	}
 
