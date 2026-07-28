@@ -47,16 +47,22 @@ type CmdSession struct {
 	Stdin    io.WriteCloser
 	Buffer   *SafeBuffer
 	Finished atomic.Bool
+	IsKilled atomic.Bool
 }
 
 var activeCmdMap sync.Map // map[string]*CmdSession
 
-func buildCmdEmbedAndComponents(cmdStr string, lastLines string, isFinished bool, sessionID string) ([]*discordgo.MessageEmbed, []discordgo.MessageComponent) {
+func buildCmdEmbedAndComponents(cmdStr string, lastLines string, isFinished bool, isFailed bool, sessionID string) ([]*discordgo.MessageEmbed, []discordgo.MessageComponent) {
 	title := "리눅스 커맨드 실행 중..."
 	color := 0x3498db
 	if isFinished {
-		title = "리눅스 커맨드 실행 완료"
-		color = 0x2ecc71
+		if isFailed {
+			title = "리눅스 커맨드 실행 실패 / 중단됨"
+			color = 0xe74c3c
+		} else {
+			title = "리눅스 커맨드 실행 완료"
+			color = 0x2ecc71
+		}
 	}
 
 	embed := &discordgo.MessageEmbed{
@@ -167,10 +173,11 @@ func handleCCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 
 		for {
 			select {
-			case <-waitDone:
+			case err := <-waitDone:
 				cmdSession.Finished.Store(true)
+				isFailed := (err != nil) || cmdSession.IsKilled.Load()
 				lastLines := buf.GetLastLines(10)
-				embeds, components := buildCmdEmbedAndComponents(cmdStr, lastLines, true, sessionID)
+				embeds, components := buildCmdEmbedAndComponents(cmdStr, lastLines, true, isFailed, sessionID)
 				_, _ = s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
 					Embeds:     &embeds,
 					Components: &components,
@@ -179,7 +186,7 @@ func handleCCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 
 			case <-ticker.C:
 				lastLines := buf.GetLastLines(10)
-				embeds, components := buildCmdEmbedAndComponents(cmdStr, lastLines, false, sessionID)
+				embeds, components := buildCmdEmbedAndComponents(cmdStr, lastLines, false, false, sessionID)
 				_, _ = s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
 					Embeds:     &embeds,
 					Components: &components,
@@ -253,6 +260,7 @@ func HandleCmdComponent(session *discordgo.Session, ic *discordgo.InteractionCre
 			},
 		})
 	} else if action == "stop" {
+		cmdSession.IsKilled.Store(true)
 		if cmdSession.Cmd != nil && cmdSession.Cmd.Process != nil {
 			_ = cmdSession.Cmd.Process.Kill()
 		}
