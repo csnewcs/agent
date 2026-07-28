@@ -143,14 +143,8 @@ func handleAIInteraction(config *Config, session *discordgo.Session, ic *discord
 	}
 
 	if !deferEphemeral && isFinalEphemeral {
-		// 채널에 공개로 "생각 중..."을 표시했으나 최종 답변이 100자를 초과하여 비공개인 경우:
-		// 1. 공개 대기 메시지에는 "100자 초과로 비공개 전달" 안내를 남김 (명령어 클릭/내역 유지)
-		// 2. 실제 답변은 질문자 본인만 볼 수 있는 비공개 팔로우업 메시지로 전송 ("전체에게 공개" 버튼 포함)
-		noticeText := "답변 길이가 100자를 초과하여 질문자 본인에게만 보이는 메시지로 전달되었습니다."
-		_, _ = session.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
-			Content: &noticeText,
-		})
-
+		// 채널에 공개로 표시했던 "생각 중..." 대기 메시지를 즉시 삭제하고 비공개 팔로우업으로 답변 전송
+		_ = session.InteractionResponseDelete(ic.Interaction)
 		return sendSplitEphemeralFollowup(session, ic, responseText)
 	}
 
