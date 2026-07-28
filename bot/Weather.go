@@ -87,6 +87,23 @@ func getWindDirectionName(degStr string) string {
 	return fmt.Sprintf("%.0f° (%s)", deg, directions[idx])
 }
 
+func getKMAObservationTime(now time.Time) time.Time {
+	loc, err := time.LoadLocation("Asia/Seoul")
+	if err != nil {
+		loc = time.FixedZone("KST", 9*3600)
+	}
+	nowKST := now.In(loc)
+
+	year, month, day := nowKST.Date()
+	hour := nowKST.Hour()
+
+	if nowKST.Minute() < 30 {
+		hour--
+	}
+
+	return time.Date(year, month, day, hour, 30, 0, 0, loc)
+}
+
 func handleWeatherCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 	_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
@@ -119,11 +136,16 @@ func handleWeatherCommand(s *discordgo.Session, ic *discordgo.InteractionCreate)
 			fmt.Sprintf("💨 풍속: %sm/s (풍향: %s)", w.WindSpeed, windText),
 		}
 
+		obsTime := getKMAObservationTime(time.Now())
+
 		embed := &discordgo.MessageEmbed{
 			Title:       "실시간 날씨 정보",
 			Description: strings.Join(lines, "\n"),
 			Color:       0x3498db,
-			Timestamp:   time.Now().Format(time.RFC3339),
+			Footer: &discordgo.MessageEmbedFooter{
+				Text: "관측 기준 시각",
+			},
+			Timestamp: obsTime.Format(time.RFC3339),
 		}
 
 		embeds := []*discordgo.MessageEmbed{embed}
