@@ -44,6 +44,23 @@ func fetchWeatherInfo() (*WeatherPayload, error) {
 	return &payload, nil
 }
 
+func getWeatherEmoji(wStr string) string {
+	switch {
+	case strings.Contains(wStr, "맑음"):
+		return "☀️"
+	case strings.Contains(wStr, "구름") || strings.Contains(wStr, "흐림"):
+		return "☁️"
+	case strings.Contains(wStr, "비"):
+		return "🌧️"
+	case strings.Contains(wStr, "눈"):
+		return "❄️"
+	case strings.Contains(wStr, "소나기"):
+		return "🌦️"
+	default:
+		return "🌤️"
+	}
+}
+
 func getWindDirectionName(degStr string) string {
 	var deg float64
 	_, err := fmt.Sscan(degStr, &deg)
@@ -72,14 +89,15 @@ func handleWeatherCommand(s *discordgo.Session, ic *discordgo.InteractionCreate)
 		}
 
 		w := wPayload.Weather
+		wEmoji := getWeatherEmoji(w.Weather)
 		windText := getWindDirectionName(w.WindDirectionDegree)
 
 		lines := []string{
-			fmt.Sprintf("날씨: %s", w.Weather),
-			fmt.Sprintf("온도: %s°C (체감온도: %.1f°C)", w.Temperature, w.ApparentTemperature),
-			fmt.Sprintf("습도: %s%%", w.Humidity),
-			fmt.Sprintf("강수량: %smm", w.Precipitation),
-			fmt.Sprintf("풍속: %sm/s (풍향: %s)", w.WindSpeed, windText),
+			fmt.Sprintf("%s 날씨: %s", wEmoji, w.Weather),
+			fmt.Sprintf("🌡️ 온도: %s°C (체감온도: %.1f°C)", w.Temperature, w.ApparentTemperature),
+			fmt.Sprintf("💧 습도: %s%%", w.Humidity),
+			fmt.Sprintf("🌧️ 강수량: %smm", w.Precipitation),
+			fmt.Sprintf("💨 풍속: %sm/s (풍향: %s)", w.WindSpeed, windText),
 		}
 
 		embed := &discordgo.MessageEmbed{
