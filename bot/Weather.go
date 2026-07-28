@@ -26,7 +26,7 @@ type WeatherPayload struct {
 }
 
 func fetchWeatherInfo() (*WeatherPayload, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Get("http://127.0.0.1:5678/webhook/weather")
 	if err != nil {
 		return nil, err
