@@ -13,6 +13,7 @@ type Config struct {
 	DefaultServerID  string
 	DefaultChannelID string
 	DBURL            string
+	TJDBURL          string
 	N8NWebhookURL    string
 	TestWebhookURL   string
 }
@@ -28,6 +29,7 @@ func LoadConfig(path string) (*Config, error) {
 		DefaultServerID:  getEnv("DEFAULT_SERVER_ID", ""),
 		DefaultChannelID: getEnv("DEFAULT_CHANNEL_ID", ""),
 		DBURL:            getEnv("DATABASE_URL", "postgres://agent@localhost:5432/agent?sslmode=disable"),
+		TJDBURL:          getEnv("TJ_DATABASE_URL", "postgresql://agent@localhost:5432/tj?sslmode=disable"),
 		N8NWebhookURL:    getEnv("N8N_WEBHOOK_URL", ""),
 		TestWebhookURL:   getEnv("N8N_TEST_WEBHOOK_URL", ""),
 	}

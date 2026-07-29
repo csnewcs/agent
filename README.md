@@ -78,3 +78,7 @@ docker compose down
 * **`/c`**: 호스트(도커 밖 리눅스 OS) 환경에서 셸 커맨드를 직접 실행하고 결과를 반환합니다.
   * `command`: 실행할 커맨드 (필수)
 * **`/weather`**: 웹훅 서비스로부터 실시간 기상 정보(날씨, 기온, 체감온도, 습도, 강수량, 풍속/풍향)를 조회하여 임베드 형태로 보여줍니다.
+* **`/tj`**: TJ 노래방 트래킹 대상(아티스트 및 곡 제목)을 추가, 삭제, 조회합니다.
+  * `/tj add category:<artist|song> name:"제목/아티스트명"`: 트래킹 대상 추가
+  * `/tj delete category:<artist|song> name:"제목/아티스트명"`: 트래킹 대상 삭제
+  * `/tj list [category:<all|artist|song>]`: 등록된 트래킹 목록 조회

@@ -34,6 +34,10 @@ func InitBot(config *Config) (*discordgo.Session, error) {
 		return nil, err
 	}
 
+	if err := InitTJDB(config); err != nil {
+		slog.Error("Failed to initialize TJ DB connection", "error", err)
+	}
+
 	activeSession, err := GetActiveSessionID(db)
 	if err != nil {
 		slog.Error("Failed to load active session ID from DB", "error", err)
@@ -605,6 +609,88 @@ func makeCommands(session *discordgo.Session, config *Config) {
 		return
 	}
 
+	tjCmd, err := NewBotCommandBuilder("tj").
+		WithDescription("TJ 노래방 트래킹 목록(아티스트/곡)을 관리합니다.").
+		WithIntegrationTypes(&[]discordgo.ApplicationIntegrationType{
+			discordgo.ApplicationIntegrationUserInstall,
+			discordgo.ApplicationIntegrationGuildInstall,
+		}).
+		WithContexts(&[]discordgo.InteractionContextType{
+			discordgo.InteractionContextGuild,
+			discordgo.InteractionContextBotDM,
+			discordgo.InteractionContextPrivateChannel,
+		}).
+		AddArg(&discordgo.ApplicationCommandOption{
+			Type:        discordgo.ApplicationCommandOptionSubCommand,
+			Name:        "add",
+			Description: "트래킹 대상(아티스트 또는 곡)을 추가합니다.",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "category",
+					Description: "구분 (artist 또는 song)",
+					Required:    true,
+					Choices: []*discordgo.ApplicationCommandOptionChoice{
+						{Name: "artist (아티스트)", Value: "artist"},
+						{Name: "song (곡 제목)", Value: "song"},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "name",
+					Description: "추가할 아티스트명 또는 곡 제목",
+					Required:    true,
+				},
+			},
+		}).
+		AddArg(&discordgo.ApplicationCommandOption{
+			Type:        discordgo.ApplicationCommandOptionSubCommand,
+			Name:        "delete",
+			Description: "트래킹 대상(아티스트 또는 곡)을 삭제합니다.",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "category",
+					Description: "구분 (artist 또는 song)",
+					Required:    true,
+					Choices: []*discordgo.ApplicationCommandOptionChoice{
+						{Name: "artist (아티스트)", Value: "artist"},
+						{Name: "song (곡 제목)", Value: "song"},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "name",
+					Description: "삭제할 아티스트명 또는 곡 제목",
+					Required:    true,
+				},
+			},
+		}).
+		AddArg(&discordgo.ApplicationCommandOption{
+			Type:        discordgo.ApplicationCommandOptionSubCommand,
+			Name:        "list",
+			Description: "현재 등록된 트래킹 목록을 조회합니다.",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "category",
+					Description: "조회할 카테고리 (all, artist 또는 song)",
+					Required:    false,
+					Choices: []*discordgo.ApplicationCommandOptionChoice{
+						{Name: "all (전체)", Value: "all"},
+						{Name: "artist (아티스트)", Value: "artist"},
+						{Name: "song (곡 제목)", Value: "song"},
+					},
+				},
+			},
+		}).
+		WithFunction(handleTJCommand).
+		Build()
+	if err != nil {
+		slog.Error("Error occured when build command tj", "error", err)
+		return
+	}
+
 	// Clean up deprecated commands
 	globalCmds, err := session.ApplicationCommands(session.State.User.ID, "")
 	if err == nil {
@@ -616,7 +702,7 @@ func makeCommands(session *discordgo.Session, config *Config) {
 		}
 	}
 
-	commands := []BotCommand{pingCmd, askCmd, deleteSessionCmd, statsCmd, kepcoCmd, goHomeCmd, cCmd, weatherCmd}
+	commands := []BotCommand{pingCmd, askCmd, deleteSessionCmd, statsCmd, kepcoCmd, goHomeCmd, cCmd, weatherCmd, tjCmd}
 	for _, command := range commands {
 		err = command.RegisterGlobal(session)
 		if err != nil {
