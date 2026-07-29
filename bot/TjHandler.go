@@ -136,6 +136,28 @@ func (c *TJDBClient) ListTracking(category string) (artists []TrackingItem, song
 	return artists, songs, nil
 }
 
+// InsertMatchedSong inserts a new song into matched_history only if pro does not exist (prevents duplicates).
+func (c *TJDBClient) InsertMatchedSong(pro int, title string, artist string, publishDate string) (bool, error) {
+	if c == nil {
+		return false, fmt.Errorf("TJ database client is nil")
+	}
+
+	query := `
+		INSERT INTO matched_history (pro, title, artist, publish_date, matched_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		ON CONFLICT (pro) DO NOTHING
+	`
+	res, err := c.Exec(query, pro, title, artist, publishDate)
+	if err != nil {
+		return false, err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
 func handleTJCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 	if tjDB == nil {
 		_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
