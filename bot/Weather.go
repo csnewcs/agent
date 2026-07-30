@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -25,9 +26,50 @@ type WeatherPayload struct {
 	} `json:"weather"`
 }
 
-func fetchWeatherInfo() (*WeatherPayload, error) {
+type LocationPos struct {
+	Address string
+	X       int
+	Y       int
+}
+
+func getLocationCoordinates(dbClient *DBClient, queryStr string) *LocationPos {
+	defaultPos := &LocationPos{
+		Address: "경기도 성남시수정구 태평1동",
+		X:       62,
+		Y:       124,
+	}
+
+	if dbClient == nil {
+		return defaultPos
+	}
+
+	queryStr = strings.TrimSpace(queryStr)
+	if queryStr == "" {
+		queryStr = "성남시 수정구 태평1동"
+	}
+
+	var pos LocationPos
+	err := dbClient.QueryRow(`
+		SELECT address, x, y
+		FROM weather_pos
+		ORDER BY similarity(address, $1) DESC
+		LIMIT 1
+	`, queryStr).Scan(&pos.Address, &pos.X, &pos.Y)
+
+	if err != nil {
+		slog.Error("Failed to lookup location coordinates", "query", queryStr, "error", err)
+		return defaultPos
+	}
+
+	return &pos
+}
+
+func fetchWeatherInfo(pos *LocationPos) (*WeatherPayload, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get("http://127.0.0.1:5678/webhook/weather")
+	reqURL := fmt.Sprintf("http://127.0.0.1:5678/webhook/weather?address=%s&x=%d&y=%d",
+		url.QueryEscape(pos.Address), pos.X, pos.Y)
+
+	resp, err := client.Get(reqURL)
 	if err != nil {
 		return nil, err
 	}
@@ -106,14 +148,23 @@ func getKMAObservationTime(now time.Time) time.Time {
 }
 
 func handleWeatherCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
+	var location string
+	options := ic.ApplicationCommandData().Options
+	for _, opt := range options {
+		if opt.Name == "location" {
+			location = opt.StringValue()
+		}
+	}
+
 	_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	})
 
 	go func() {
-		wPayload, err := fetchWeatherInfo()
+		pos := getLocationCoordinates(db, location)
+		wPayload, err := fetchWeatherInfo(pos)
 		if err != nil {
-			slog.Error("Failed to fetch weather info", "error", err)
+			slog.Error("Failed to fetch weather info", "location", pos.Address, "error", err)
 			errMsg := fmt.Sprintf("날씨 정보를 가져오는데 실패했습니다: %v", err)
 			_, _ = s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
 				Content: &errMsg,
@@ -130,6 +181,7 @@ func handleWeatherCommand(s *discordgo.Session, ic *discordgo.InteractionCreate)
 		windText := getWindDirectionName(w.WindDirectionDegree)
 
 		lines := []string{
+			fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)", pos.Address, pos.X, pos.Y),
 			fmt.Sprintf("%s 날씨: %s", wEmoji, weatherName),
 			fmt.Sprintf("🌡️ 온도: %s°C (체감온도: %.1f°C)", w.Temperature, w.ApparentTemperature),
 			fmt.Sprintf("💧 습도: %s%%", w.Humidity),

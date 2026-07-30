@@ -602,6 +602,12 @@ func makeCommands(session *discordgo.Session, config *Config) {
 			discordgo.InteractionContextBotDM,
 			discordgo.InteractionContextPrivateChannel,
 		}).
+		AddArg(&discordgo.ApplicationCommandOption{
+			Type:        discordgo.ApplicationCommandOptionString,
+			Name:        "location",
+			Description: "조회할 위치/지역명 (기본값: 성남시 수정구 태평1동)",
+			Required:    false,
+		}).
 		WithFunction(handleWeatherCommand).
 		Build()
 	if err != nil {
