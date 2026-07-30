@@ -65,7 +65,7 @@ func getLocationCoordinates(dbClient *DBClient, queryStr string) *LocationPos {
 }
 
 func fetchWeatherInfo(pos *LocationPos) (*WeatherPayload, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second}
 	reqURL := fmt.Sprintf("http://127.0.0.1:5678/webhook/weather?address=%s&x=%d&y=%d",
 		url.QueryEscape(pos.Address), pos.X, pos.Y)
 
