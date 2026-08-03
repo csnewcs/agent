@@ -232,7 +232,6 @@ func handleForecastCommand(s *discordgo.Session, ic *discordgo.InteractionCreate
 			return
 		}
 
-		// Store in memory cache
 		cacheKey := fmt.Sprintf("%s:%d:%d", pos.Address, pos.X, pos.Y)
 		forecastCache.Store(cacheKey, forecastMap)
 
@@ -306,7 +305,22 @@ func handleForecastCommand(s *discordgo.Session, ic *discordgo.InteractionCreate
 
 func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 	customID := ic.MessageComponentData().CustomID
-	cacheKey := strings.TrimPrefix(customID, "forecast_detail:")
+
+	var cacheKey string
+	pageIndex := 0
+
+	if strings.HasPrefix(customID, "forecast_page:") {
+		payload := strings.TrimPrefix(customID, "forecast_page:")
+		parts := strings.Split(payload, ":")
+		if len(parts) >= 4 {
+			cacheKey = fmt.Sprintf("%s:%s:%s", parts[0], parts[1], parts[2])
+			_, _ = fmt.Sscanf(parts[3], "%d", &pageIndex)
+		} else {
+			cacheKey = payload
+		}
+	} else {
+		cacheKey = strings.TrimPrefix(customID, "forecast_detail:")
+	}
 
 	parts := strings.Split(cacheKey, ":")
 	var pos *LocationPos
@@ -334,13 +348,21 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		var err error
 		forecastMap, err = fetchForecastInfo(pos)
 		if err != nil {
-			_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Flags:   discordgo.MessageFlagsEphemeral,
-					Content: fmt.Sprintf("상세 예보 정보를 가져오는데 실패했습니다: %v", err),
-				},
-			})
+			respData := &discordgo.InteractionResponseData{
+				Flags:   discordgo.MessageFlagsEphemeral,
+				Content: fmt.Sprintf("상세 예보 정보를 가져오는데 실패했습니다: %v", err),
+			}
+			if strings.HasPrefix(customID, "forecast_page:") {
+				_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseUpdateMessage,
+					Data: respData,
+				})
+			} else {
+				_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: respData,
+				})
+			}
 			return
 		}
 	}
@@ -351,30 +373,52 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 	}
 	sort.Strings(keys)
 
-	type DateGroup struct {
-		DateLabel string
-		Lines     []string
-	}
-	var dateGroups []*DateGroup
-	groupMap := make(map[string]*DateGroup)
+	dateMap := make(map[string][]string)
+	var dateOrder []string
 
 	for _, k := range keys {
 		parts := strings.Split(k, "-")
-		if len(parts) != 2 || len(parts[0]) != 8 || len(parts[1]) != 4 {
+		if len(parts) != 2 || len(parts[0]) != 8 {
 			continue
 		}
-
-		dateStr := parts[0]
-		timeStr := parts[1]
-
-		t, err := time.Parse("20060102", dateStr)
-		var dateLabel string
-		if err == nil {
-			dateLabel = t.Format("2006년 01월 02일")
-		} else {
-			dateLabel = dateStr
+		dStr := parts[0]
+		if _, exists := dateMap[dStr]; !exists {
+			dateOrder = append(dateOrder, dStr)
 		}
+		dateMap[dStr] = append(dateMap[dStr], k)
+	}
 
+	totalPages := len(dateOrder)
+	if totalPages == 0 {
+		return
+	}
+
+	if pageIndex < 0 {
+		pageIndex = 0
+	}
+	if pageIndex >= totalPages {
+		pageIndex = totalPages - 1
+	}
+
+	targetDateStr := dateOrder[pageIndex]
+	targetItems := dateMap[targetDateStr]
+
+	t, err := time.Parse("20060102", targetDateStr)
+	var dateLabel string
+	if err == nil {
+		weekdays := []string{"일", "월", "화", "수", "목", "금", "토"}
+		dateLabel = fmt.Sprintf("%s (%s)", t.Format("2006년 01월 02일"), weekdays[t.Weekday()])
+	} else {
+		dateLabel = targetDateStr
+	}
+
+	var lines []string
+	for _, k := range targetItems {
+		parts := strings.Split(k, "-")
+		if len(parts) != 2 || len(parts[1]) != 4 {
+			continue
+		}
+		timeStr := parts[1]
 		hourMinStr := fmt.Sprintf("%s:%s", timeStr[:2], timeStr[2:])
 		item := forecastMap[k]
 
@@ -382,7 +426,6 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		if item.Weather == "" {
 			wEmoji = getWeatherEmoji(item.Cloud)
 		}
-
 		wName := item.Weather
 		if wName == "" {
 			wName = item.Cloud
@@ -396,10 +439,6 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		}
 
 		appTempStr := formatApparentTemp(item)
-		if appTempStr != "" {
-			tempStr = fmt.Sprintf("%s (체감 %s)", tempStr, appTempStr)
-		}
-
 		popStr := item.ProbabilityOfPrecipitation
 		if popStr != "" {
 			popStr = popStr + "%"
@@ -408,28 +447,26 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		}
 
 		precipStr := item.Precipitation
-		if precipStr == "" {
+		if precipStr == "" || precipStr == "0" {
 			precipStr = "0mm"
+		} else if !strings.HasSuffix(precipStr, "mm") {
+			precipStr = precipStr + "mm"
 		}
 
-		line := fmt.Sprintf("• `%s` %s %s | 🌡️ **%s** | 💧 %s%% | 🌧️ %s (%s)",
+		entry := fmt.Sprintf("• `%s` %s **%s** | 🌡️ **%s**\n  └ 💧 습도 %s%% | 🌧️ 강수량 %s (확률 %s)",
 			hourMinStr, wEmoji, wName, tempStr, item.Humidity, precipStr, popStr)
 
-		grp, exists := groupMap[dateLabel]
-		if !exists {
-			grp = &DateGroup{
-				DateLabel: dateLabel,
-				Lines:     []string{},
-			}
-			groupMap[dateLabel] = grp
-			dateGroups = append(dateGroups, grp)
+		if appTempStr != "" {
+			entry = fmt.Sprintf("• `%s` %s **%s** | 🌡️ **%s**\n  └ 체감: %s\n  └ 💧 습도 %s%% | 🌧️ 강수량 %s (확률 %s)",
+				hourMinStr, wEmoji, wName, tempStr, appTempStr, item.Humidity, precipStr, popStr)
 		}
-		grp.Lines = append(grp.Lines, line)
+
+		lines = append(lines, entry)
 	}
 
 	embed := &discordgo.MessageEmbed{
-		Title:       "📊 시간별 상세 단기예보",
-		Description: fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)", pos.Address, pos.X, pos.Y),
+		Title:       fmt.Sprintf("📊 시간별 상세 단기예보 (%d/%d 일차)", pageIndex+1, totalPages),
+		Description: fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)\n📅 **%s** (%d개 시간대)", pos.Address, pos.X, pos.Y, dateLabel, len(targetItems)),
 		Color:       0x2ecc71,
 		Timestamp:   time.Now().UTC().Format(time.RFC3339),
 		Footer: &discordgo.MessageEmbedFooter{
@@ -437,29 +474,61 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		},
 	}
 
-	for _, grp := range dateGroups {
-		if len(embed.Fields) >= 25 {
-			break
-		}
-
-		valStr := strings.Join(grp.Lines, "\n")
-		runes := []rune(valStr)
-		if len(runes) > 1000 {
-			valStr = string(runes[:990]) + "\n... (외 이하 생략)"
-		}
-
-		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
-			Name:   fmt.Sprintf("📅 %s (%d개 예보)", grp.DateLabel, len(grp.Lines)),
-			Value:  valStr,
-			Inline: false,
-		})
+	valStr := strings.Join(lines, "\n")
+	runes := []rune(valStr)
+	if len(runes) > 1000 {
+		valStr = string(runes[:990]) + "\n... (외 이하 생략)"
 	}
 
-	_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Flags:  discordgo.MessageFlagsEphemeral,
-			Embeds: []*discordgo.MessageEmbed{embed},
-		},
+	embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+		Name:   "🕒 시간별 예보 목록",
+		Value:  valStr,
+		Inline: false,
 	})
+
+	// Pagination Navigation Buttons
+	btnPrev := discordgo.Button{
+		Label:    "◀ 이전 일자",
+		Style:    discordgo.PrimaryButton,
+		CustomID: fmt.Sprintf("forecast_page:%s:%d", cacheKey, pageIndex-1),
+		Disabled: (pageIndex == 0),
+	}
+
+	btnIndicator := discordgo.Button{
+		Label:    fmt.Sprintf("%d / %d 일차", pageIndex+1, totalPages),
+		Style:    discordgo.SecondaryButton,
+		CustomID: "forecast_page_indicator",
+		Disabled: true,
+	}
+
+	btnNext := discordgo.Button{
+		Label:    "다음 일자 ▶",
+		Style:    discordgo.PrimaryButton,
+		CustomID: fmt.Sprintf("forecast_page:%s:%d", cacheKey, pageIndex+1),
+		Disabled: (pageIndex >= totalPages-1),
+	}
+
+	components := []discordgo.MessageComponent{
+		discordgo.ActionsRow{
+			Components: []discordgo.MessageComponent{btnPrev, btnIndicator, btnNext},
+		},
+	}
+
+	responseData := &discordgo.InteractionResponseData{
+		Flags:      discordgo.MessageFlagsEphemeral,
+		Embeds:     []*discordgo.MessageEmbed{embed},
+		Components: components,
+	}
+
+	if strings.HasPrefix(customID, "forecast_page:") {
+		_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseUpdateMessage,
+			Data: responseData,
+		})
+	} else {
+		_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: responseData,
+		})
+	}
 }
