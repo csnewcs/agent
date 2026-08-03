@@ -479,56 +479,13 @@ func makeCommands(session *discordgo.Session, config *Config) {
 			discordgo.InteractionContextBotDM,
 			discordgo.InteractionContextPrivateChannel,
 		}).
-		AddArg(&discordgo.ApplicationCommandOption{
-			Type:        discordgo.ApplicationCommandOptionString,
-			Name:        "person",
-			Description: "인원 선택 (기본값: 배재현)",
-			Required:    false,
-			Choices: []*discordgo.ApplicationCommandOptionChoice{
-				{
-					Name:  "배재현",
-					Value: "배재현",
-				},
-				{
-					Name:  "임태현",
-					Value: "임태현",
-				},
-				{
-					Name:  "박민혁",
-					Value: "박민혁",
-				},
-			},
-		}).
 		WithFunction(func(s *discordgo.Session, ic *discordgo.InteractionCreate) {
-			person := getInteractionOptionString(ic, "person")
-			if person == "" {
-				person = "배재현"
-			}
-
 			kstLocation := time.FixedZone("KST", 9*3600)
 			now := time.Now().In(kstLocation)
 
 			isHoliday := isKoreanHoliday(now)
-
-			var targetHour int
-			var isOff bool
-
-			switch person {
-			case "임태현":
-				targetHour = 17
-				isOff = (now.Weekday() == time.Saturday || now.Weekday() == time.Sunday || isHoliday)
-			case "박민혁":
-				if now.Weekday() == time.Sunday {
-					isOff = true
-				} else if now.Weekday() == time.Saturday || isHoliday {
-					targetHour = 18
-				} else {
-					targetHour = 22
-				}
-			default: // 배재현
-				targetHour = 18
-				isOff = (now.Weekday() == time.Saturday || now.Weekday() == time.Sunday || isHoliday)
-			}
+			targetHour := 18
+			isOff := (now.Weekday() == time.Saturday || now.Weekday() == time.Sunday || isHoliday)
 
 			if isOff || (targetHour > 0 && now.Hour() >= targetHour) {
 				_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
