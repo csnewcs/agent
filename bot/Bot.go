@@ -874,6 +874,11 @@ func sendSessionAutocomplete(session *discordgo.Session, ic *discordgo.Interacti
 
 func RunComponent(session *discordgo.Session, ic *discordgo.InteractionCreate) {
 	customID := ic.MessageComponentData().CustomID
+	if strings.HasPrefix(customID, "forecast_detail:") {
+		handleForecastDetailComponent(session, ic)
+		return
+	}
+
 	if strings.HasPrefix(customID, "c_input:") || strings.HasPrefix(customID, "c_stop:") {
 		HandleCmdComponent(session, ic)
 		return

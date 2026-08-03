@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -28,6 +29,8 @@ type ForecastItem struct {
 	WindU                      string      `json:"wind_u"`
 	WindV                      string      `json:"wind_v"`
 }
+
+var forecastCache sync.Map // cacheID -> map[string]ForecastItem
 
 func fetchForecastInfo(pos *LocationPos) (map[string]ForecastItem, error) {
 	client := &http.Client{Timeout: 60 * time.Second}
@@ -49,7 +52,6 @@ func fetchForecastInfo(pos *LocationPos) (map[string]ForecastItem, error) {
 		return nil, err
 	}
 
-	// Try unmarshaling as { "forecasts": map[string]ForecastItem }
 	var resWrapper struct {
 		Forecasts map[string]ForecastItem `json:"forecasts"`
 	}
@@ -57,13 +59,40 @@ func fetchForecastInfo(pos *LocationPos) (map[string]ForecastItem, error) {
 		return resWrapper.Forecasts, nil
 	}
 
-	// Fallback to direct map[string]ForecastItem
 	var directMap map[string]ForecastItem
 	if err := json.Unmarshal(bodyBytes, &directMap); err == nil {
 		return directMap, nil
 	}
 
 	return nil, fmt.Errorf("failed to parse forecast JSON response")
+}
+
+func formatApparentTemp(item ForecastItem) string {
+	var val interface{}
+	if item.ApparentTemperature != nil {
+		val = item.ApparentTemperature
+	} else if item.ApperentTemperature != nil {
+		val = item.ApperentTemperature
+	}
+
+	if val == nil {
+		return ""
+	}
+
+	switch v := val.(type) {
+	case float64:
+		if v == 0 {
+			return ""
+		}
+		return fmt.Sprintf("%.1f°C", v)
+	case string:
+		if v == "" || v == "0" {
+			return ""
+		}
+		return v + "°C"
+	default:
+		return fmt.Sprintf("%v°C", v)
+	}
 }
 
 func buildDailySummary(dateStr string, items []string, forecastMap map[string]ForecastItem) (string, string) {
@@ -87,7 +116,6 @@ func buildDailySummary(dateStr string, items []string, forecastMap map[string]Fo
 	for _, k := range items {
 		item := forecastMap[k]
 
-		// Temp
 		if item.Temperature != "" {
 			var tempVal float64
 			if _, err := fmt.Sscanf(item.Temperature, "%f", &tempVal); err == nil {
@@ -105,7 +133,6 @@ func buildDailySummary(dateStr string, items []string, forecastMap map[string]Fo
 			}
 		}
 
-		// POP (Probability of Precipitation)
 		if item.ProbabilityOfPrecipitation != "" {
 			var popVal int
 			if _, err := fmt.Sscanf(item.ProbabilityOfPrecipitation, "%d", &popVal); err == nil {
@@ -116,7 +143,6 @@ func buildDailySummary(dateStr string, items []string, forecastMap map[string]Fo
 			}
 		}
 
-		// Weather
 		wName := item.Weather
 		if wName == "" {
 			wName = item.Cloud
@@ -129,7 +155,6 @@ func buildDailySummary(dateStr string, items []string, forecastMap map[string]Fo
 		}
 	}
 
-	// Representative weather
 	repWeather := "맑음"
 	if rainSnow != "" {
 		repWeather = rainSnow
@@ -144,7 +169,6 @@ func buildDailySummary(dateStr string, items []string, forecastMap map[string]Fo
 	}
 	repEmoji := getWeatherEmoji(repWeather)
 
-	// Format parts: 날씨, 최저-최고기온, 강수확률
 	var parts []string
 	parts = append(parts, fmt.Sprintf("%s **%s**", repEmoji, repWeather))
 
@@ -196,14 +220,16 @@ func handleForecastCommand(s *discordgo.Session, ic *discordgo.InteractionCreate
 			return
 		}
 
-		// Sort keys
+		// Store in memory cache
+		cacheKey := fmt.Sprintf("%s:%d:%d", pos.Address, pos.X, pos.Y)
+		forecastCache.Store(cacheKey, forecastMap)
+
 		var keys []string
 		for k := range forecastMap {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 
-		// Group keys by YYYYMMDD date string
 		dateMap := make(map[string][]string)
 		var dateOrder []string
 
@@ -243,12 +269,185 @@ func handleForecastCommand(s *discordgo.Session, ic *discordgo.InteractionCreate
 			})
 		}
 
+		button := discordgo.Button{
+			Label:    "🔍 상세보기",
+			Style:    discordgo.PrimaryButton,
+			CustomID: fmt.Sprintf("forecast_detail:%s", cacheKey),
+		}
+
+		components := []discordgo.MessageComponent{
+			discordgo.ActionsRow{
+				Components: []discordgo.MessageComponent{button},
+			},
+		}
+
 		embeds := []*discordgo.MessageEmbed{embed}
 		_, editErr := s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
-			Embeds: &embeds,
+			Embeds:     &embeds,
+			Components: &components,
 		})
 		if editErr != nil {
 			slog.Error("Failed to edit interaction response for /forecast", "error", editErr)
 		}
 	}()
+}
+
+func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.InteractionCreate) {
+	customID := ic.MessageComponentData().CustomID
+	cacheKey := strings.TrimPrefix(customID, "forecast_detail:")
+
+	parts := strings.Split(cacheKey, ":")
+	var pos *LocationPos
+	if len(parts) >= 3 {
+		var x, y int
+		_, _ = fmt.Sscanf(parts[1], "%d", &x)
+		_, _ = fmt.Sscanf(parts[2], "%d", &y)
+		pos = &LocationPos{
+			Address: parts[0],
+			X:       x,
+			Y:       y,
+		}
+	} else {
+		pos = getLocationCoordinates(db, "")
+	}
+
+	var forecastMap map[string]ForecastItem
+	if val, ok := forecastCache.Load(cacheKey); ok {
+		if m, ok := val.(map[string]ForecastItem); ok {
+			forecastMap = m
+		}
+	}
+
+	if len(forecastMap) == 0 {
+		var err error
+		forecastMap, err = fetchForecastInfo(pos)
+		if err != nil {
+			_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Flags:   discordgo.MessageFlagsEphemeral,
+					Content: fmt.Sprintf("상세 예보 정보를 가져오는데 실패했습니다: %v", err),
+				},
+			})
+			return
+		}
+	}
+
+	var keys []string
+	for k := range forecastMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	type DateGroup struct {
+		DateLabel string
+		Lines     []string
+	}
+	var dateGroups []*DateGroup
+	groupMap := make(map[string]*DateGroup)
+
+	for _, k := range keys {
+		parts := strings.Split(k, "-")
+		if len(parts) != 2 || len(parts[0]) != 8 || len(parts[1]) != 4 {
+			continue
+		}
+
+		dateStr := parts[0]
+		timeStr := parts[1]
+
+		t, err := time.Parse("20060102", dateStr)
+		var dateLabel string
+		if err == nil {
+			dateLabel = t.Format("2006년 01월 02일")
+		} else {
+			dateLabel = dateStr
+		}
+
+		hourMinStr := fmt.Sprintf("%s:%s", timeStr[:2], timeStr[2:])
+		item := forecastMap[k]
+
+		wEmoji := getWeatherEmoji(item.Weather)
+		if item.Weather == "" {
+			wEmoji = getWeatherEmoji(item.Cloud)
+		}
+
+		wName := item.Weather
+		if wName == "" {
+			wName = item.Cloud
+		}
+
+		tempStr := item.Temperature
+		if tempStr != "" {
+			tempStr = tempStr + "°C"
+		} else {
+			tempStr = "-"
+		}
+
+		appTempStr := formatApparentTemp(item)
+		if appTempStr != "" {
+			tempStr = fmt.Sprintf("%s (체감 %s)", tempStr, appTempStr)
+		}
+
+		popStr := item.ProbabilityOfPrecipitation
+		if popStr != "" {
+			popStr = popStr + "%"
+		} else {
+			popStr = "0%"
+		}
+
+		precipStr := item.Precipitation
+		if precipStr == "" {
+			precipStr = "0mm"
+		}
+
+		line := fmt.Sprintf("• `%s` %s %s | 🌡️ **%s** | 💧 %s%% | 🌧️ %s (%s)",
+			hourMinStr, wEmoji, wName, tempStr, item.Humidity, precipStr, popStr)
+
+		grp, exists := groupMap[dateLabel]
+		if !exists {
+			grp = &DateGroup{
+				DateLabel: dateLabel,
+				Lines:     []string{},
+			}
+			groupMap[dateLabel] = grp
+			dateGroups = append(dateGroups, grp)
+		}
+		grp.Lines = append(grp.Lines, line)
+	}
+
+	embed := &discordgo.MessageEmbed{
+		Title:       "📊 시간별 상세 단기예보",
+		Description: fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)", pos.Address, pos.X, pos.Y),
+		Color:       0x2ecc71,
+		Timestamp:   time.Now().UTC().Format(time.RFC3339),
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: "나에게만 보이는 상세 정보입니다",
+		},
+	}
+
+	for _, grp := range dateGroups {
+		if len(embed.Fields) >= 25 {
+			break
+		}
+
+		valStr := strings.Join(grp.Lines, "\n")
+		runes := []rune(valStr)
+		if len(runes) > 1000 {
+			valStr = string(runes[:990]) + "\n... (외 이하 생략)"
+		}
+
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:   fmt.Sprintf("📅 %s (%d개 예보)", grp.DateLabel, len(grp.Lines)),
+			Value:  valStr,
+			Inline: false,
+		})
+	}
+
+	_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Flags:  discordgo.MessageFlagsEphemeral,
+			Embeds: []*discordgo.MessageEmbed{embed},
+		},
+	})
 }
