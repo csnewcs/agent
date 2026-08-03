@@ -462,8 +462,7 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		dateLabel = targetDateStr
 	}
 
-	var amLines []string
-	var pmLines []string
+	var lines []string
 
 	for _, k := range targetItems {
 		parts := strings.Split(k, "-")
@@ -515,30 +514,26 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 
 		var precipLine string
 		if precipStr == "강수 없음" {
-			precipLine = fmt.Sprintf("🌧️ 강수 없음 (확률 %s)", popStr)
+			precipLine = fmt.Sprintf("강수 없음 (%s)", popStr)
 		} else {
-			precipLine = fmt.Sprintf("🌧️ 강수량 %s (확률 %s)", precipStr, popStr)
+			precipLine = fmt.Sprintf("강수량 %s (%s)", precipStr, popStr)
 		}
 
 		var entry string
 		if appTempStr != "" {
-			entry = fmt.Sprintf("• `%s` %s **%s** | 🌡️ **%s**\n  └ 체감: %s\n  └ 💧 습도 %s%% | %s",
+			entry = fmt.Sprintf("[%s] %s %s %s (체감 %s)\n  └ 습도 %s%% | %s",
 				hourMinStr, wEmoji, wName, tempStr, appTempStr, item.Humidity, precipLine)
 		} else {
-			entry = fmt.Sprintf("• `%s` %s **%s** | 🌡️ **%s**\n  └ 💧 습도 %s%% | %s",
+			entry = fmt.Sprintf("[%s] %s %s %s\n  └ 습도 %s%% | %s",
 				hourMinStr, wEmoji, wName, tempStr, item.Humidity, precipLine)
 		}
 
-		if hourVal < 12 {
-			amLines = append(amLines, entry)
-		} else {
-			pmLines = append(pmLines, entry)
-		}
+		lines = append(lines, entry)
 	}
 
 	embed := &discordgo.MessageEmbed{
 		Title:       fmt.Sprintf("📊 시간별 상세 단기예보 (%d/%d 일차)", pageIndex+1, totalPages),
-		Description: fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)\n📅 **%s** (3시간 간격 예보)", pos.Address, pos.X, pos.Y, dateLabel),
+		Description: fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)\n📅 **%s** (3시간 간격)", pos.Address, pos.X, pos.Y, dateLabel),
 		Color:       0x2ecc71,
 		Timestamp:   time.Now().UTC().Format(time.RFC3339),
 		Footer: &discordgo.MessageEmbedFooter{
@@ -546,31 +541,17 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		},
 	}
 
-	if len(amLines) > 0 {
-		valStr := strings.Join(amLines, "\n\n")
-		runes := []rune(valStr)
-		if len(runes) > 1000 {
-			valStr = string(runes[:990]) + "\n..."
-		}
-		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
-			Name:   "🌅 오전 예보 (00:00 ~ 11:00)",
-			Value:  valStr,
-			Inline: false,
-		})
+	valStr := fmt.Sprintf("```text\n%s\n```", strings.Join(lines, "\n\n"))
+	runes := []rune(valStr)
+	if len(runes) > 1000 {
+		valStr = string(runes[:990]) + "\n```"
 	}
 
-	if len(pmLines) > 0 {
-		valStr := strings.Join(pmLines, "\n\n")
-		runes := []rune(valStr)
-		if len(runes) > 1000 {
-			valStr = string(runes[:990]) + "\n..."
-		}
-		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
-			Name:   "🌆 오후 예보 (12:00 ~ 23:00)",
-			Value:  valStr,
-			Inline: false,
-		})
-	}
+	embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+		Name:   "🕒 3시간 간격 예보 목록",
+		Value:  valStr,
+		Inline: false,
+	})
 
 	// Pagination Navigation Buttons
 	btnPrev := discordgo.Button{
