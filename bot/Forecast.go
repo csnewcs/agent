@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -43,11 +44,26 @@ func fetchForecastInfo(pos *LocationPos) (map[string]ForecastItem, error) {
 		return nil, fmt.Errorf("HTTP status %d", resp.StatusCode)
 	}
 
-	var payload map[string]ForecastItem
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return nil, err
 	}
-	return payload, nil
+
+	// Try unmarshaling as { "forecasts": map[string]ForecastItem }
+	var resWrapper struct {
+		Forecasts map[string]ForecastItem `json:"forecasts"`
+	}
+	if err := json.Unmarshal(bodyBytes, &resWrapper); err == nil && len(resWrapper.Forecasts) > 0 {
+		return resWrapper.Forecasts, nil
+	}
+
+	// Fallback to direct map[string]ForecastItem
+	var directMap map[string]ForecastItem
+	if err := json.Unmarshal(bodyBytes, &directMap); err == nil {
+		return directMap, nil
+	}
+
+	return nil, fmt.Errorf("failed to parse forecast JSON response")
 }
 
 func formatApparentTemp(item ForecastItem) string {
