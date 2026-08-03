@@ -16,18 +16,20 @@ import (
 )
 
 type ForecastItem struct {
-	Weather                    string      `json:"weather"`
-	Cloud                      string      `json:"cloud"`
-	Temperature                string      `json:"temperature"`
-	ApparentTemperature        interface{} `json:"apparent_temperature"`
-	ApperentTemperature        interface{} `json:"apperent_temperature"`
-	Humidity                   string      `json:"humidity"`
-	Precipitation              string      `json:"precipitation"`
-	ProbabilityOfPrecipitation string      `json:"probability_of_precipitation"`
-	WindSpeed                  string      `json:"wind_speed"`
-	WindDirectionDegree        string      `json:"wind_direction_degree"`
-	WindU                      string      `json:"wind_u"`
-	WindV                      string      `json:"wind_v"`
+	Weather                       string      `json:"weather"`
+	Cloud                         string      `json:"cloud"`
+	Temperature                   string      `json:"temperature"`
+	ApparentTemperature           interface{} `json:"apparent_temperature"`
+	ApperentTemperature           interface{} `json:"apperent_temperature"`
+	KMSApparentTemperature        interface{} `json:"kms_apparent_temperature"`
+	AustralianApparentTemperature interface{} `json:"australian_apparent_temperature"`
+	Humidity                      string      `json:"humidity"`
+	Precipitation                 string      `json:"precipitation"`
+	ProbabilityOfPrecipitation    string      `json:"probability_of_precipitation"`
+	WindSpeed                     string      `json:"wind_speed"`
+	WindDirectionDegree           string      `json:"wind_direction_degree"`
+	WindU                         string      `json:"wind_u"`
+	WindV                         string      `json:"wind_v"`
 }
 
 var forecastCache sync.Map // cacheID -> map[string]ForecastItem
@@ -69,10 +71,14 @@ func fetchForecastInfo(pos *LocationPos) (map[string]ForecastItem, error) {
 
 func formatApparentTemp(item ForecastItem) string {
 	var val interface{}
-	if item.ApparentTemperature != nil {
+	if item.KMSApparentTemperature != nil {
+		val = item.KMSApparentTemperature
+	} else if item.ApparentTemperature != nil {
 		val = item.ApparentTemperature
 	} else if item.ApperentTemperature != nil {
 		val = item.ApperentTemperature
+	} else if item.AustralianApparentTemperature != nil {
+		val = item.AustralianApparentTemperature
 	}
 
 	if val == nil {

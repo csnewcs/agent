@@ -14,15 +14,17 @@ import (
 
 type WeatherPayload struct {
 	Weather struct {
-		Weather              string  `json:"weather"`
-		Temperature          string  `json:"temperature"`
-		ApparentTemperature float64 `json:"apparent_temperature"`
-		Humidity             string  `json:"humidity"`
-		Precipitation        string  `json:"precipitation"`
-		WindSpeed            string  `json:"wind_speed"`
-		WindDirectionDegree  string  `json:"wind_direction_degree"`
-		WindU                string  `json:"wind_u"`
-		WindV                string  `json:"wind_v"`
+		Weather                       string  `json:"weather"`
+		Temperature                   string  `json:"temperature"`
+		ApparentTemperature          float64 `json:"apparent_temperature"`
+		KMSApparentTemperature        float64 `json:"kms_apparent_temperature"`
+		AustralianApparentTemperature float64 `json:"australian_apparent_temperature"`
+		Humidity                      string  `json:"humidity"`
+		Precipitation                 string  `json:"precipitation"`
+		WindSpeed                     string  `json:"wind_speed"`
+		WindDirectionDegree           string  `json:"wind_direction_degree"`
+		WindU                         string  `json:"wind_u"`
+		WindV                         string  `json:"wind_v"`
 	} `json:"weather"`
 }
 
@@ -180,12 +182,27 @@ func handleWeatherCommand(s *discordgo.Session, ic *discordgo.InteractionCreate)
 		wEmoji := getWeatherEmoji(w.Weather)
 		windText := getWindDirectionName(w.WindDirectionDegree)
 
+		appTemp := w.KMSApparentTemperature
+		if appTemp == 0 {
+			appTemp = w.ApparentTemperature
+		}
+		if appTemp == 0 {
+			appTemp = w.AustralianApparentTemperature
+		}
+
+		precipText := w.Precipitation
+		if precipText == "" || precipText == "0" {
+			precipText = "0mm (강수 없음)"
+		} else if !strings.HasSuffix(precipText, "mm") {
+			precipText = precipText + "mm"
+		}
+
 		lines := []string{
 			fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)", pos.Address, pos.X, pos.Y),
 			fmt.Sprintf("%s 날씨: %s", wEmoji, weatherName),
-			fmt.Sprintf("🌡️ 온도: %s°C (체감온도: %.1f°C)", w.Temperature, w.ApparentTemperature),
+			fmt.Sprintf("🌡️ 온도: %s°C (체감온도: %.1f°C)", w.Temperature, appTemp),
 			fmt.Sprintf("💧 습도: %s%%", w.Humidity),
-			fmt.Sprintf("🌧️ 강수량: %smm", w.Precipitation),
+			fmt.Sprintf("🌧️ 강수량: %s", precipText),
 			fmt.Sprintf("💨 풍속: %sm/s (풍향: %s)", w.WindSpeed, windText),
 		}
 
