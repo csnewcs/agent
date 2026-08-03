@@ -697,6 +697,30 @@ func makeCommands(session *discordgo.Session, config *Config) {
 		return
 	}
 
+	forecastCmd, err := NewBotCommandBuilder("forecast").
+		WithDescription("실시간 단기예보 정보를 조회합니다.").
+		WithIntegrationTypes(&[]discordgo.ApplicationIntegrationType{
+			discordgo.ApplicationIntegrationUserInstall,
+			discordgo.ApplicationIntegrationGuildInstall,
+		}).
+		WithContexts(&[]discordgo.InteractionContextType{
+			discordgo.InteractionContextGuild,
+			discordgo.InteractionContextBotDM,
+			discordgo.InteractionContextPrivateChannel,
+		}).
+		AddArg(&discordgo.ApplicationCommandOption{
+			Type:        discordgo.ApplicationCommandOptionString,
+			Name:        "location",
+			Description: "조회할 위치/지역명 (기본값: 성남시 수정구 태평1동)",
+			Required:    false,
+		}).
+		WithFunction(handleForecastCommand).
+		Build()
+	if err != nil {
+		slog.Error("Error occured when build command forecast", "error", err)
+		return
+	}
+
 	// Clean up deprecated commands
 	globalCmds, err := session.ApplicationCommands(session.State.User.ID, "")
 	if err == nil {
@@ -708,7 +732,7 @@ func makeCommands(session *discordgo.Session, config *Config) {
 		}
 	}
 
-	commands := []BotCommand{pingCmd, askCmd, deleteSessionCmd, statsCmd, kepcoCmd, goHomeCmd, cCmd, weatherCmd, tjCmd}
+	commands := []BotCommand{pingCmd, askCmd, deleteSessionCmd, statsCmd, kepcoCmd, goHomeCmd, cCmd, weatherCmd, tjCmd, forecastCmd}
 	for _, command := range commands {
 		err = command.RegisterGlobal(session)
 		if err != nil {
