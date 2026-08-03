@@ -88,7 +88,7 @@ func handleForecastCommand(s *discordgo.Session, ic *discordgo.InteractionCreate
 	}
 
 	_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	})
 
 	go func() {
