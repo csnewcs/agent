@@ -424,6 +424,11 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		var hourVal int
 		_, _ = fmt.Sscanf(timeStr[:2], "%d", &hourVal)
 
+		// Filter to 3-hour intervals (00, 03, 06, 09, 12, 15, 18, 21) if day has many items
+		if len(targetItems) > 8 && hourVal%3 != 0 {
+			continue
+		}
+
 		item := forecastMap[k]
 
 		wEmoji := getWeatherEmoji(item.Weather)
@@ -482,7 +487,7 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 
 	embed := &discordgo.MessageEmbed{
 		Title:       fmt.Sprintf("📊 시간별 상세 단기예보 (%d/%d 일차)", pageIndex+1, totalPages),
-		Description: fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)\n📅 **%s** (%d개 시간대)", pos.Address, pos.X, pos.Y, dateLabel, len(targetItems)),
+		Description: fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)\n📅 **%s** (3시간 간격 예보)", pos.Address, pos.X, pos.Y, dateLabel),
 		Color:       0x2ecc71,
 		Timestamp:   time.Now().UTC().Format(time.RFC3339),
 		Footer: &discordgo.MessageEmbedFooter{
