@@ -349,7 +349,6 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		forecastMap, err = fetchForecastInfo(pos)
 		if err != nil {
 			respData := &discordgo.InteractionResponseData{
-				Flags:   discordgo.MessageFlagsEphemeral,
 				Content: fmt.Sprintf("상세 예보 정보를 가져오는데 실패했습니다: %v", err),
 			}
 			if strings.HasPrefix(customID, "forecast_page:") {
@@ -412,7 +411,9 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		dateLabel = targetDateStr
 	}
 
-	var lines []string
+	var amLines []string
+	var pmLines []string
+
 	for _, k := range targetItems {
 		parts := strings.Split(k, "-")
 		if len(parts) != 2 || len(parts[1]) != 4 {
@@ -420,6 +421,9 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		}
 		timeStr := parts[1]
 		hourMinStr := fmt.Sprintf("%s:%s", timeStr[:2], timeStr[2:])
+		var hourVal int
+		_, _ = fmt.Sscanf(timeStr[:2], "%d", &hourVal)
+
 		item := forecastMap[k]
 
 		wEmoji := getWeatherEmoji(item.Weather)
@@ -447,21 +451,33 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		}
 
 		precipStr := item.Precipitation
-		if precipStr == "" || precipStr == "0" {
-			precipStr = "0mm"
+		if precipStr == "" || precipStr == "0" || precipStr == "강수없음" {
+			precipStr = "강수 없음"
 		} else if !strings.HasSuffix(precipStr, "mm") {
 			precipStr = precipStr + "mm"
 		}
 
-		entry := fmt.Sprintf("• `%s` %s **%s** | 🌡️ **%s**\n  └ 💧 습도 %s%% | 🌧️ 강수량 %s (확률 %s)",
-			hourMinStr, wEmoji, wName, tempStr, item.Humidity, precipStr, popStr)
-
-		if appTempStr != "" {
-			entry = fmt.Sprintf("• `%s` %s **%s** | 🌡️ **%s**\n  └ 체감: %s\n  └ 💧 습도 %s%% | 🌧️ 강수량 %s (확률 %s)",
-				hourMinStr, wEmoji, wName, tempStr, appTempStr, item.Humidity, precipStr, popStr)
+		var precipLine string
+		if precipStr == "강수 없음" {
+			precipLine = fmt.Sprintf("🌧️ 강수 없음 (확률 %s)", popStr)
+		} else {
+			precipLine = fmt.Sprintf("🌧️ 강수량 %s (확률 %s)", precipStr, popStr)
 		}
 
-		lines = append(lines, entry)
+		var entry string
+		if appTempStr != "" {
+			entry = fmt.Sprintf("• `%s` %s **%s** | 🌡️ **%s**\n  └ 체감: %s\n  └ 💧 습도 %s%% | %s",
+				hourMinStr, wEmoji, wName, tempStr, appTempStr, item.Humidity, precipLine)
+		} else {
+			entry = fmt.Sprintf("• `%s` %s **%s** | 🌡️ **%s**\n  └ 💧 습도 %s%% | %s",
+				hourMinStr, wEmoji, wName, tempStr, item.Humidity, precipLine)
+		}
+
+		if hourVal < 12 {
+			amLines = append(amLines, entry)
+		} else {
+			pmLines = append(pmLines, entry)
+		}
 	}
 
 	embed := &discordgo.MessageEmbed{
@@ -470,21 +486,35 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		Color:       0x2ecc71,
 		Timestamp:   time.Now().UTC().Format(time.RFC3339),
 		Footer: &discordgo.MessageEmbedFooter{
-			Text: "나에게만 보이는 상세 정보입니다",
+			Text: "기상청 단기예보 기준",
 		},
 	}
 
-	valStr := strings.Join(lines, "\n")
-	runes := []rune(valStr)
-	if len(runes) > 1000 {
-		valStr = string(runes[:990]) + "\n... (외 이하 생략)"
+	if len(amLines) > 0 {
+		valStr := strings.Join(amLines, "\n\n")
+		runes := []rune(valStr)
+		if len(runes) > 1000 {
+			valStr = string(runes[:990]) + "\n..."
+		}
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:   "🌅 오전 예보 (00:00 ~ 11:00)",
+			Value:  valStr,
+			Inline: false,
+		})
 	}
 
-	embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
-		Name:   "🕒 시간별 예보 목록",
-		Value:  valStr,
-		Inline: false,
-	})
+	if len(pmLines) > 0 {
+		valStr := strings.Join(pmLines, "\n\n")
+		runes := []rune(valStr)
+		if len(runes) > 1000 {
+			valStr = string(runes[:990]) + "\n..."
+		}
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:   "🌆 오후 예보 (12:00 ~ 23:00)",
+			Value:  valStr,
+			Inline: false,
+		})
+	}
 
 	// Pagination Navigation Buttons
 	btnPrev := discordgo.Button{
@@ -515,7 +545,6 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 	}
 
 	responseData := &discordgo.InteractionResponseData{
-		Flags:      discordgo.MessageFlagsEphemeral,
 		Embeds:     []*discordgo.MessageEmbed{embed},
 		Components: components,
 	}
