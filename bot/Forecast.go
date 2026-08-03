@@ -273,37 +273,6 @@ func buildDailySummary(dateStr string, items []string, forecastMap map[string]Fo
 		sb.WriteString(strings.Join(metaParts, " | ") + "\n")
 	}
 
-	if len(checkpoints) > 0 {
-		sb.WriteString("\n🕒 **주요 시간대 요약**:\n")
-		sort.Strings(checkpoints)
-		for _, k := range checkpoints {
-			parts := strings.Split(k, "-")
-			hourMinStr := fmt.Sprintf("%s:%s", parts[1][:2], parts[1][2:])
-			item := forecastMap[k]
-
-			wEmoji := getWeatherEmoji(item.Weather)
-			if item.Weather == "" {
-				wEmoji = getWeatherEmoji(item.Cloud)
-			}
-			wName := item.Weather
-			if wName == "" {
-				wName = item.Cloud
-			}
-
-			tStr := item.Temperature
-			if tStr != "" {
-				tStr = tStr + "°C"
-			}
-			appStr := formatApparentTemp(item)
-			if appStr != "" {
-				tStr = fmt.Sprintf("%s (체감 %s)", tStr, appStr)
-			}
-
-			sb.WriteString(fmt.Sprintf("• `%s` %s %s | **%s** | 💧 %s%%\n",
-				hourMinStr, wEmoji, wName, tStr, item.Humidity))
-		}
-	}
-
 	return dateLabel, sb.String()
 }
 
