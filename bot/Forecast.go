@@ -19,7 +19,7 @@ type ForecastItem struct {
 	Cloud                      string      `json:"cloud"`
 	Temperature                string      `json:"temperature"`
 	ApparentTemperature        interface{} `json:"apparent_temperature"`
-	ApperentTemperature        interface{} `json:"apperent_temperature"` // Typo fallback
+	ApperentTemperature        interface{} `json:"apperent_temperature"`
 	Humidity                   string      `json:"humidity"`
 	Precipitation              string      `json:"precipitation"`
 	ProbabilityOfPrecipitation string      `json:"probability_of_precipitation"`
@@ -66,34 +66,6 @@ func fetchForecastInfo(pos *LocationPos) (map[string]ForecastItem, error) {
 	return nil, fmt.Errorf("failed to parse forecast JSON response")
 }
 
-func formatApparentTemp(item ForecastItem) string {
-	var val interface{}
-	if item.ApparentTemperature != nil {
-		val = item.ApparentTemperature
-	} else if item.ApperentTemperature != nil {
-		val = item.ApperentTemperature
-	}
-
-	if val == nil {
-		return ""
-	}
-
-	switch v := val.(type) {
-	case float64:
-		if v == 0 {
-			return ""
-		}
-		return fmt.Sprintf("%.1f°C", v)
-	case string:
-		if v == "" || v == "0" {
-			return ""
-		}
-		return v + "°C"
-	default:
-		return fmt.Sprintf("%v°C", v)
-	}
-}
-
 func buildDailySummary(dateStr string, items []string, forecastMap map[string]ForecastItem) (string, string) {
 	t, err := time.Parse("20060102", dateStr)
 	var dateLabel string
@@ -106,29 +78,14 @@ func buildDailySummary(dateStr string, items []string, forecastMap map[string]Fo
 
 	var minTemp, maxTemp float64
 	hasTemp := false
-	var maxAppTemp float64
-	hasAppTemp := false
-	var minHum, maxHum int
-	hasHum := false
 	var maxPOP int
 	hasPOP := false
-	var maxWind float64
-	hasWind := false
 
 	weatherCounts := make(map[string]int)
 	rainSnow := ""
 
-	checkpointSet := map[string]bool{
-		"0900": true, "1500": true, "2100": true,
-	}
-	var checkpoints []string
-
 	for _, k := range items {
 		item := forecastMap[k]
-		parts := strings.Split(k, "-")
-		if len(parts) == 2 && checkpointSet[parts[1]] {
-			checkpoints = append(checkpoints, k)
-		}
 
 		// Temp
 		if item.Temperature != "" {
@@ -148,54 +105,13 @@ func buildDailySummary(dateStr string, items []string, forecastMap map[string]Fo
 			}
 		}
 
-		// Apparent Temp
-		appTempStr := formatApparentTemp(item)
-		if appTempStr != "" {
-			var appVal float64
-			if _, err := fmt.Sscanf(appTempStr, "%f", &appVal); err == nil {
-				if !hasAppTemp || appVal > maxAppTemp {
-					maxAppTemp = appVal
-					hasAppTemp = true
-				}
-			}
-		}
-
-		// Humidity
-		if item.Humidity != "" {
-			var humVal int
-			if _, err := fmt.Sscanf(item.Humidity, "%d", &humVal); err == nil {
-				if !hasHum {
-					minHum, maxHum = humVal, humVal
-					hasHum = true
-				} else {
-					if humVal < minHum {
-						minHum = humVal
-					}
-					if humVal > maxHum {
-						maxHum = humVal
-					}
-				}
-			}
-		}
-
-		// POP
+		// POP (Probability of Precipitation)
 		if item.ProbabilityOfPrecipitation != "" {
 			var popVal int
 			if _, err := fmt.Sscanf(item.ProbabilityOfPrecipitation, "%d", &popVal); err == nil {
 				if !hasPOP || popVal > maxPOP {
 					maxPOP = popVal
 					hasPOP = true
-				}
-			}
-		}
-
-		// Wind
-		if item.WindSpeed != "" {
-			var windVal float64
-			if _, err := fmt.Sscanf(item.WindSpeed, "%f", &windVal); err == nil {
-				if !hasWind || windVal > maxWind {
-					maxWind = windVal
-					hasWind = true
 				}
 			}
 		}
@@ -210,17 +126,6 @@ func buildDailySummary(dateStr string, items []string, forecastMap map[string]Fo
 			if strings.Contains(wName, "비") || strings.Contains(wName, "눈") || strings.Contains(wName, "소나기") {
 				rainSnow = wName
 			}
-		}
-	}
-
-	// Fallback checkpoints if standard 0900/1500/2100 are missing for current day
-	if len(checkpoints) == 0 && len(items) > 0 {
-		step := len(items) / 3
-		if step < 1 {
-			step = 1
-		}
-		for i := 0; i < len(items) && len(checkpoints) < 3; i += step {
-			checkpoints = append(checkpoints, items[i])
 		}
 	}
 
@@ -239,41 +144,23 @@ func buildDailySummary(dateStr string, items []string, forecastMap map[string]Fo
 	}
 	repEmoji := getWeatherEmoji(repWeather)
 
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%s **대표 날씨**: %s\n", repEmoji, repWeather))
+	// Format parts: 날씨, 최저-최고기온, 강수확률
+	var parts []string
+	parts = append(parts, fmt.Sprintf("%s **%s**", repEmoji, repWeather))
 
 	if hasTemp {
 		if minTemp == maxTemp {
-			sb.WriteString(fmt.Sprintf("🌡️ **기온**: **%.0f°C**", maxTemp))
+			parts = append(parts, fmt.Sprintf("🌡️ **%.0f°C**", maxTemp))
 		} else {
-			sb.WriteString(fmt.Sprintf("🌡️ **기온**: **%.0f°C ~ %.0f°C**", minTemp, maxTemp))
+			parts = append(parts, fmt.Sprintf("🌡️ **%.0f°C / %.0f°C**", minTemp, maxTemp))
 		}
-		if hasAppTemp {
-			sb.WriteString(fmt.Sprintf(" (최고 체감 **%.1f°C**)", maxAppTemp))
-		}
-		sb.WriteString("\n")
 	}
 
-	var metaParts []string
 	if hasPOP {
-		metaParts = append(metaParts, fmt.Sprintf("🌧️ **강수확률**: 최대 **%d%%**", maxPOP))
-	}
-	if hasHum {
-		if minHum == maxHum {
-			metaParts = append(metaParts, fmt.Sprintf("💧 **습도**: **%d%%**", maxHum))
-		} else {
-			metaParts = append(metaParts, fmt.Sprintf("💧 **습도**: **%d%% ~ %d%%**", minHum, maxHum))
-		}
-	}
-	if hasWind {
-		metaParts = append(metaParts, fmt.Sprintf("💨 **풍속**: 최대 **%.1fm/s**", maxWind))
+		parts = append(parts, fmt.Sprintf("🌧️ 강수확률 **%d%%**", maxPOP))
 	}
 
-	if len(metaParts) > 0 {
-		sb.WriteString(strings.Join(metaParts, " | ") + "\n")
-	}
-
-	return dateLabel, sb.String()
+	return dateLabel, strings.Join(parts, " | ")
 }
 
 func handleForecastCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
