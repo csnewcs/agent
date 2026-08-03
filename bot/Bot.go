@@ -874,7 +874,7 @@ func sendSessionAutocomplete(session *discordgo.Session, ic *discordgo.Interacti
 
 func RunComponent(session *discordgo.Session, ic *discordgo.InteractionCreate) {
 	customID := ic.MessageComponentData().CustomID
-	if strings.HasPrefix(customID, "forecast_detail:") || strings.HasPrefix(customID, "forecast_page:") {
+	if strings.HasPrefix(customID, "forecast_") {
 		handleForecastDetailComponent(session, ic)
 		return
 	}
