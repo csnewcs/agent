@@ -182,12 +182,20 @@ func handleWeatherCommand(s *discordgo.Session, ic *discordgo.InteractionCreate)
 		wEmoji := getWeatherEmoji(w.Weather)
 		windText := getWindDirectionName(w.WindDirectionDegree)
 
-		appTemp := w.KMSApparentTemperature
-		if appTemp == 0 {
-			appTemp = w.ApparentTemperature
+		var appTempParts []string
+		if w.KMSApparentTemperature != 0 {
+			appTempParts = append(appTempParts, fmt.Sprintf("기상청 %.1f°C", w.KMSApparentTemperature))
 		}
-		if appTemp == 0 {
-			appTemp = w.AustralianApparentTemperature
+		if w.AustralianApparentTemperature != 0 {
+			appTempParts = append(appTempParts, fmt.Sprintf("호주식 %.1f°C", w.AustralianApparentTemperature))
+		}
+		if len(appTempParts) == 0 && w.ApparentTemperature != 0 {
+			appTempParts = append(appTempParts, fmt.Sprintf("%.1f°C", w.ApparentTemperature))
+		}
+
+		appTempStr := strings.Join(appTempParts, " / ")
+		if appTempStr == "" {
+			appTempStr = w.Temperature + "°C"
 		}
 
 		precipText := w.Precipitation
@@ -200,7 +208,7 @@ func handleWeatherCommand(s *discordgo.Session, ic *discordgo.InteractionCreate)
 		lines := []string{
 			fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)", pos.Address, pos.X, pos.Y),
 			fmt.Sprintf("%s 날씨: %s", wEmoji, weatherName),
-			fmt.Sprintf("🌡️ 온도: %s°C (체감온도: %.1f°C)", w.Temperature, appTemp),
+			fmt.Sprintf("🌡️ 온도: %s°C (체감: %s)", w.Temperature, appTempStr),
 			fmt.Sprintf("💧 습도: %s%%", w.Humidity),
 			fmt.Sprintf("🌧️ 강수량: %s", precipText),
 			fmt.Sprintf("💨 풍속: %sm/s (풍향: %s)", w.WindSpeed, windText),

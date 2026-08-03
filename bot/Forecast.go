@@ -70,35 +70,41 @@ func fetchForecastInfo(pos *LocationPos) (map[string]ForecastItem, error) {
 }
 
 func formatApparentTemp(item ForecastItem) string {
-	var val interface{}
-	if item.KMSApparentTemperature != nil {
-		val = item.KMSApparentTemperature
-	} else if item.ApparentTemperature != nil {
-		val = item.ApparentTemperature
-	} else if item.ApperentTemperature != nil {
-		val = item.ApperentTemperature
-	} else if item.AustralianApparentTemperature != nil {
-		val = item.AustralianApparentTemperature
+	parseVal := func(v interface{}) float64 {
+		if v == nil {
+			return 0
+		}
+		switch t := v.(type) {
+		case float64:
+			return t
+		case string:
+			var f float64
+			_, _ = fmt.Sscanf(t, "%f", &f)
+			return f
+		default:
+			return 0
+		}
 	}
 
-	if val == nil {
-		return ""
+	kmsVal := parseVal(item.KMSApparentTemperature)
+	ausVal := parseVal(item.AustralianApparentTemperature)
+	defaultVal := parseVal(item.ApparentTemperature)
+	if defaultVal == 0 {
+		defaultVal = parseVal(item.ApperentTemperature)
 	}
 
-	switch v := val.(type) {
-	case float64:
-		if v == 0 {
-			return ""
-		}
-		return fmt.Sprintf("%.1f°C", v)
-	case string:
-		if v == "" || v == "0" {
-			return ""
-		}
-		return v + "°C"
-	default:
-		return fmt.Sprintf("%v°C", v)
+	var parts []string
+	if kmsVal != 0 {
+		parts = append(parts, fmt.Sprintf("기상청 %.1f°C", kmsVal))
 	}
+	if ausVal != 0 {
+		parts = append(parts, fmt.Sprintf("호주식 %.1f°C", ausVal))
+	}
+	if len(parts) == 0 && defaultVal != 0 {
+		parts = append(parts, fmt.Sprintf("%.1f°C", defaultVal))
+	}
+
+	return strings.Join(parts, " / ")
 }
 
 func buildDailySummary(dateStr string, items []string, forecastMap map[string]ForecastItem) (string, string) {
