@@ -94,6 +94,219 @@ func formatApparentTemp(item ForecastItem) string {
 	}
 }
 
+func buildDailySummary(dateStr string, items []string, forecastMap map[string]ForecastItem) (string, string) {
+	t, err := time.Parse("20060102", dateStr)
+	var dateLabel string
+	if err == nil {
+		weekdays := []string{"일", "월", "화", "수", "목", "금", "토"}
+		dateLabel = fmt.Sprintf("%s (%s)", t.Format("2006년 01월 02일"), weekdays[t.Weekday()])
+	} else {
+		dateLabel = dateStr
+	}
+
+	var minTemp, maxTemp float64
+	hasTemp := false
+	var maxAppTemp float64
+	hasAppTemp := false
+	var minHum, maxHum int
+	hasHum := false
+	var maxPOP int
+	hasPOP := false
+	var maxWind float64
+	hasWind := false
+
+	weatherCounts := make(map[string]int)
+	rainSnow := ""
+
+	checkpointSet := map[string]bool{
+		"0900": true, "1500": true, "2100": true,
+	}
+	var checkpoints []string
+
+	for _, k := range items {
+		item := forecastMap[k]
+		parts := strings.Split(k, "-")
+		if len(parts) == 2 && checkpointSet[parts[1]] {
+			checkpoints = append(checkpoints, k)
+		}
+
+		// Temp
+		if item.Temperature != "" {
+			var tempVal float64
+			if _, err := fmt.Sscanf(item.Temperature, "%f", &tempVal); err == nil {
+				if !hasTemp {
+					minTemp, maxTemp = tempVal, tempVal
+					hasTemp = true
+				} else {
+					if tempVal < minTemp {
+						minTemp = tempVal
+					}
+					if tempVal > maxTemp {
+						maxTemp = tempVal
+					}
+				}
+			}
+		}
+
+		// Apparent Temp
+		appTempStr := formatApparentTemp(item)
+		if appTempStr != "" {
+			var appVal float64
+			if _, err := fmt.Sscanf(appTempStr, "%f", &appVal); err == nil {
+				if !hasAppTemp || appVal > maxAppTemp {
+					maxAppTemp = appVal
+					hasAppTemp = true
+				}
+			}
+		}
+
+		// Humidity
+		if item.Humidity != "" {
+			var humVal int
+			if _, err := fmt.Sscanf(item.Humidity, "%d", &humVal); err == nil {
+				if !hasHum {
+					minHum, maxHum = humVal, humVal
+					hasHum = true
+				} else {
+					if humVal < minHum {
+						minHum = humVal
+					}
+					if humVal > maxHum {
+						maxHum = humVal
+					}
+				}
+			}
+		}
+
+		// POP
+		if item.ProbabilityOfPrecipitation != "" {
+			var popVal int
+			if _, err := fmt.Sscanf(item.ProbabilityOfPrecipitation, "%d", &popVal); err == nil {
+				if !hasPOP || popVal > maxPOP {
+					maxPOP = popVal
+					hasPOP = true
+				}
+			}
+		}
+
+		// Wind
+		if item.WindSpeed != "" {
+			var windVal float64
+			if _, err := fmt.Sscanf(item.WindSpeed, "%f", &windVal); err == nil {
+				if !hasWind || windVal > maxWind {
+					maxWind = windVal
+					hasWind = true
+				}
+			}
+		}
+
+		// Weather
+		wName := item.Weather
+		if wName == "" {
+			wName = item.Cloud
+		}
+		if wName != "" {
+			weatherCounts[wName]++
+			if strings.Contains(wName, "비") || strings.Contains(wName, "눈") || strings.Contains(wName, "소나기") {
+				rainSnow = wName
+			}
+		}
+	}
+
+	// Fallback checkpoints if standard 0900/1500/2100 are missing for current day
+	if len(checkpoints) == 0 && len(items) > 0 {
+		step := len(items) / 3
+		if step < 1 {
+			step = 1
+		}
+		for i := 0; i < len(items) && len(checkpoints) < 3; i += step {
+			checkpoints = append(checkpoints, items[i])
+		}
+	}
+
+	// Representative weather
+	repWeather := "맑음"
+	if rainSnow != "" {
+		repWeather = rainSnow
+	} else {
+		maxCnt := 0
+		for w, cnt := range weatherCounts {
+			if cnt > maxCnt {
+				maxCnt = cnt
+				repWeather = w
+			}
+		}
+	}
+	repEmoji := getWeatherEmoji(repWeather)
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%s **대표 날씨**: %s\n", repEmoji, repWeather))
+
+	if hasTemp {
+		if minTemp == maxTemp {
+			sb.WriteString(fmt.Sprintf("🌡️ **기온**: **%.0f°C**", maxTemp))
+		} else {
+			sb.WriteString(fmt.Sprintf("🌡️ **기온**: **%.0f°C ~ %.0f°C**", minTemp, maxTemp))
+		}
+		if hasAppTemp {
+			sb.WriteString(fmt.Sprintf(" (최고 체감 **%.1f°C**)", maxAppTemp))
+		}
+		sb.WriteString("\n")
+	}
+
+	var metaParts []string
+	if hasPOP {
+		metaParts = append(metaParts, fmt.Sprintf("🌧️ **강수확률**: 최대 **%d%%**", maxPOP))
+	}
+	if hasHum {
+		if minHum == maxHum {
+			metaParts = append(metaParts, fmt.Sprintf("💧 **습도**: **%d%%**", maxHum))
+		} else {
+			metaParts = append(metaParts, fmt.Sprintf("💧 **습도**: **%d%% ~ %d%%**", minHum, maxHum))
+		}
+	}
+	if hasWind {
+		metaParts = append(metaParts, fmt.Sprintf("💨 **풍속**: 최대 **%.1fm/s**", maxWind))
+	}
+
+	if len(metaParts) > 0 {
+		sb.WriteString(strings.Join(metaParts, " | ") + "\n")
+	}
+
+	if len(checkpoints) > 0 {
+		sb.WriteString("\n🕒 **주요 시간대 요약**:\n")
+		sort.Strings(checkpoints)
+		for _, k := range checkpoints {
+			parts := strings.Split(k, "-")
+			hourMinStr := fmt.Sprintf("%s:%s", parts[1][:2], parts[1][2:])
+			item := forecastMap[k]
+
+			wEmoji := getWeatherEmoji(item.Weather)
+			if item.Weather == "" {
+				wEmoji = getWeatherEmoji(item.Cloud)
+			}
+			wName := item.Weather
+			if wName == "" {
+				wName = item.Cloud
+			}
+
+			tStr := item.Temperature
+			if tStr != "" {
+				tStr = tStr + "°C"
+			}
+			appStr := formatApparentTemp(item)
+			if appStr != "" {
+				tStr = fmt.Sprintf("%s (체감 %s)", tStr, appStr)
+			}
+
+			sb.WriteString(fmt.Sprintf("• `%s` %s %s | **%s** | 💧 %s%%\n",
+				hourMinStr, wEmoji, wName, tStr, item.Humidity))
+		}
+	}
+
+	return dateLabel, sb.String()
+}
+
 func handleForecastCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 	var location string
 	options := ic.ApplicationCommandData().Options
@@ -127,87 +340,31 @@ func handleForecastCommand(s *discordgo.Session, ic *discordgo.InteractionCreate
 			return
 		}
 
-		// Sort time keys chronologically (e.g. "20260803-1200", "20260803-1500")
+		// Sort keys
 		var keys []string
 		for k := range forecastMap {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 
-		// Group forecast items by Date ("YYYY년 MM월 DD일")
-		type DateGroup struct {
-			DateLabel string
-			Lines     []string
-		}
-		var dateGroups []*DateGroup
-		groupMap := make(map[string]*DateGroup)
+		// Group keys by YYYYMMDD date string
+		dateMap := make(map[string][]string)
+		var dateOrder []string
 
 		for _, k := range keys {
 			parts := strings.Split(k, "-")
-			if len(parts) != 2 || len(parts[0]) != 8 || len(parts[1]) != 4 {
+			if len(parts) != 2 || len(parts[0]) != 8 {
 				continue
 			}
-
-			dateStr := parts[0]
-			timeStr := parts[1]
-
-			t, err := time.Parse("20060102", dateStr)
-			var dateLabel string
-			if err == nil {
-				dateLabel = t.Format("2006년 01월 02일")
-			} else {
-				dateLabel = dateStr
+			dStr := parts[0]
+			if _, exists := dateMap[dStr]; !exists {
+				dateOrder = append(dateOrder, dStr)
 			}
-
-			hourMinStr := fmt.Sprintf("%s:%s", timeStr[:2], timeStr[2:])
-			item := forecastMap[k]
-
-			wEmoji := getWeatherEmoji(item.Weather)
-			if item.Weather == "" {
-				wEmoji = getWeatherEmoji(item.Cloud)
-			}
-
-			tempStr := item.Temperature
-			if tempStr != "" {
-				tempStr = tempStr + "°C"
-			} else {
-				tempStr = "-"
-			}
-
-			appTempStr := formatApparentTemp(item)
-			if appTempStr != "" {
-				tempStr = fmt.Sprintf("%s (체감 %s)", tempStr, appTempStr)
-			}
-
-			popStr := item.ProbabilityOfPrecipitation
-			if popStr != "" {
-				popStr = popStr + "%"
-			} else {
-				popStr = "0%"
-			}
-
-			precipStr := item.Precipitation
-			if precipStr == "" {
-				precipStr = "0mm"
-			}
-
-			line := fmt.Sprintf("• `%s` %s %s | 🌡️ **%s** | 💧 %s%% | 🌧️ %s (%s)",
-				hourMinStr, wEmoji, item.Weather, tempStr, item.Humidity, precipStr, popStr)
-
-			grp, exists := groupMap[dateLabel]
-			if !exists {
-				grp = &DateGroup{
-					DateLabel: dateLabel,
-					Lines:     []string{},
-				}
-				groupMap[dateLabel] = grp
-				dateGroups = append(dateGroups, grp)
-			}
-			grp.Lines = append(grp.Lines, line)
+			dateMap[dStr] = append(dateMap[dStr], k)
 		}
 
 		embed := &discordgo.MessageEmbed{
-			Title:       "🌤️ 실시간 단기예보 정보",
+			Title:       "🌤️ 실시간 단기예보 요약",
 			Description: fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)", pos.Address, pos.X, pos.Y),
 			Color:       0x3498db,
 			Timestamp:   time.Now().UTC().Format(time.RFC3339),
@@ -216,20 +373,16 @@ func handleForecastCommand(s *discordgo.Session, ic *discordgo.InteractionCreate
 			},
 		}
 
-		for _, grp := range dateGroups {
+		for _, dStr := range dateOrder {
 			if len(embed.Fields) >= 25 {
 				break
 			}
-
-			valStr := strings.Join(grp.Lines, "\n")
-			runes := []rune(valStr)
-			if len(runes) > 1000 {
-				valStr = string(runes[:990]) + "\n... (외 이하 생략)"
-			}
+			items := dateMap[dStr]
+			dateLabel, summaryVal := buildDailySummary(dStr, items, forecastMap)
 
 			embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
-				Name:   fmt.Sprintf("📅 %s (%d개 예보)", grp.DateLabel, len(grp.Lines)),
-				Value:  valStr,
+				Name:   fmt.Sprintf("📅 %s", dateLabel),
+				Value:  summaryVal,
 				Inline: false,
 			})
 		}
