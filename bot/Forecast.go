@@ -199,6 +199,67 @@ func buildDailySummary(dateStr string, items []string, forecastMap map[string]Fo
 	return dateLabel, strings.Join(parts, " | ")
 }
 
+func buildSummaryEmbedAndComponents(pos *LocationPos, forecastMap map[string]ForecastItem, cacheKey string) (*discordgo.MessageEmbed, []discordgo.MessageComponent) {
+	var keys []string
+	for k := range forecastMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	dateMap := make(map[string][]string)
+	var dateOrder []string
+
+	for _, k := range keys {
+		parts := strings.Split(k, "-")
+		if len(parts) != 2 || len(parts[0]) != 8 {
+			continue
+		}
+		dStr := parts[0]
+		if _, exists := dateMap[dStr]; !exists {
+			dateOrder = append(dateOrder, dStr)
+		}
+		dateMap[dStr] = append(dateMap[dStr], k)
+	}
+
+	embed := &discordgo.MessageEmbed{
+		Title:       "🌤️ 실시간 단기예보 요약",
+		Description: fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)", pos.Address, pos.X, pos.Y),
+		Color:       0x3498db,
+		Timestamp:   time.Now().UTC().Format(time.RFC3339),
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: "기상청 단기예보 기준",
+		},
+	}
+
+	for _, dStr := range dateOrder {
+		if len(embed.Fields) >= 25 {
+			break
+		}
+		items := dateMap[dStr]
+		dateLabel, summaryVal := buildDailySummary(dStr, items, forecastMap)
+
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:   fmt.Sprintf("📅 %s", dateLabel),
+			Value:  summaryVal,
+			Inline: false,
+		})
+	}
+
+	button := discordgo.Button{
+		Label:    "🔍 상세보기",
+		Style:    discordgo.PrimaryButton,
+		CustomID: fmt.Sprintf("forecast_detail:%s:0", cacheKey),
+	}
+
+	components := []discordgo.MessageComponent{
+		discordgo.ActionsRow{
+			Components: []discordgo.MessageComponent{button},
+		},
+	}
+
+	return embed, components
+}
+
 func handleForecastCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 	var location string
 	options := ic.ApplicationCommandData().Options
@@ -235,62 +296,7 @@ func handleForecastCommand(s *discordgo.Session, ic *discordgo.InteractionCreate
 		cacheKey := fmt.Sprintf("%s:%d:%d", pos.Address, pos.X, pos.Y)
 		forecastCache.Store(cacheKey, forecastMap)
 
-		var keys []string
-		for k := range forecastMap {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		dateMap := make(map[string][]string)
-		var dateOrder []string
-
-		for _, k := range keys {
-			parts := strings.Split(k, "-")
-			if len(parts) != 2 || len(parts[0]) != 8 {
-				continue
-			}
-			dStr := parts[0]
-			if _, exists := dateMap[dStr]; !exists {
-				dateOrder = append(dateOrder, dStr)
-			}
-			dateMap[dStr] = append(dateMap[dStr], k)
-		}
-
-		embed := &discordgo.MessageEmbed{
-			Title:       "🌤️ 실시간 단기예보 요약",
-			Description: fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)", pos.Address, pos.X, pos.Y),
-			Color:       0x3498db,
-			Timestamp:   time.Now().UTC().Format(time.RFC3339),
-			Footer: &discordgo.MessageEmbedFooter{
-				Text: "기상청 단기예보 기준",
-			},
-		}
-
-		for _, dStr := range dateOrder {
-			if len(embed.Fields) >= 25 {
-				break
-			}
-			items := dateMap[dStr]
-			dateLabel, summaryVal := buildDailySummary(dStr, items, forecastMap)
-
-			embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
-				Name:   fmt.Sprintf("📅 %s", dateLabel),
-				Value:  summaryVal,
-				Inline: false,
-			})
-		}
-
-		button := discordgo.Button{
-			Label:    "🔍 상세보기",
-			Style:    discordgo.PrimaryButton,
-			CustomID: fmt.Sprintf("forecast_detail:%s", cacheKey),
-		}
-
-		components := []discordgo.MessageComponent{
-			discordgo.ActionsRow{
-				Components: []discordgo.MessageComponent{button},
-			},
-		}
+		embed, components := buildSummaryEmbedAndComponents(pos, forecastMap, cacheKey)
 
 		embeds := []*discordgo.MessageEmbed{embed}
 		_, editErr := s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
@@ -309,6 +315,52 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 	var cacheKey string
 	pageIndex := 0
 
+	if strings.HasPrefix(customID, "forecast_summary:") {
+		cacheKey = strings.TrimPrefix(customID, "forecast_summary:")
+
+		parts := strings.Split(cacheKey, ":")
+		var pos *LocationPos
+		if len(parts) >= 3 {
+			var x, y int
+			_, _ = fmt.Sscanf(parts[1], "%d", &x)
+			_, _ = fmt.Sscanf(parts[2], "%d", &y)
+			pos = &LocationPos{Address: parts[0], X: x, Y: y}
+		} else {
+			pos = getLocationCoordinates(db, "")
+		}
+
+		var forecastMap map[string]ForecastItem
+		if val, ok := forecastCache.Load(cacheKey); ok {
+			if m, ok := val.(map[string]ForecastItem); ok {
+				forecastMap = m
+			}
+		}
+
+		if len(forecastMap) == 0 {
+			var err error
+			forecastMap, err = fetchForecastInfo(pos)
+			if err != nil {
+				_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseUpdateMessage,
+					Data: &discordgo.InteractionResponseData{
+						Content: fmt.Sprintf("예보 정보를 가져오는데 실패했습니다: %v", err),
+					},
+				})
+				return
+			}
+		}
+
+		embed, components := buildSummaryEmbedAndComponents(pos, forecastMap, cacheKey)
+		_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseUpdateMessage,
+			Data: &discordgo.InteractionResponseData{
+				Embeds:     []*discordgo.MessageEmbed{embed},
+				Components: components,
+			},
+		})
+		return
+	}
+
 	if strings.HasPrefix(customID, "forecast_page:") {
 		payload := strings.TrimPrefix(customID, "forecast_page:")
 		parts := strings.Split(payload, ":")
@@ -318,8 +370,15 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		} else {
 			cacheKey = payload
 		}
-	} else {
-		cacheKey = strings.TrimPrefix(customID, "forecast_detail:")
+	} else if strings.HasPrefix(customID, "forecast_detail:") {
+		payload := strings.TrimPrefix(customID, "forecast_detail:")
+		parts := strings.Split(payload, ":")
+		if len(parts) >= 4 {
+			cacheKey = fmt.Sprintf("%s:%s:%s", parts[0], parts[1], parts[2])
+			_, _ = fmt.Sscanf(parts[3], "%d", &pageIndex)
+		} else {
+			cacheKey = payload
+		}
 	}
 
 	parts := strings.Split(cacheKey, ":")
@@ -348,20 +407,12 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		var err error
 		forecastMap, err = fetchForecastInfo(pos)
 		if err != nil {
-			respData := &discordgo.InteractionResponseData{
-				Content: fmt.Sprintf("상세 예보 정보를 가져오는데 실패했습니다: %v", err),
-			}
-			if strings.HasPrefix(customID, "forecast_page:") {
-				_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseUpdateMessage,
-					Data: respData,
-				})
-			} else {
-				_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: respData,
-				})
-			}
+			_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseUpdateMessage,
+				Data: &discordgo.InteractionResponseData{
+					Content: fmt.Sprintf("상세 예보 정보를 가져오는데 실패했습니다: %v", err),
+				},
+			})
 			return
 		}
 	}
@@ -543,9 +594,15 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		Disabled: (pageIndex >= totalPages-1),
 	}
 
+	btnSummary := discordgo.Button{
+		Label:    "🔙 요약보기",
+		Style:    discordgo.SecondaryButton,
+		CustomID: fmt.Sprintf("forecast_summary:%s", cacheKey),
+	}
+
 	components := []discordgo.MessageComponent{
 		discordgo.ActionsRow{
-			Components: []discordgo.MessageComponent{btnPrev, btnIndicator, btnNext},
+			Components: []discordgo.MessageComponent{btnPrev, btnIndicator, btnNext, btnSummary},
 		},
 	}
 
@@ -554,15 +611,8 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		Components: components,
 	}
 
-	if strings.HasPrefix(customID, "forecast_page:") {
-		_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseUpdateMessage,
-			Data: responseData,
-		})
-	} else {
-		_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: responseData,
-		})
-	}
+	_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseUpdateMessage,
+		Data: responseData,
+	})
 }
