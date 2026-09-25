@@ -12,6 +12,19 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+func buildWeatherCommand() (BotCommand, error) {
+	return NewBotCommandBuilder("weather").
+		WithDescription(".").
+		AddArg(&discordgo.ApplicationCommandOption{
+			Type:        discordgo.ApplicationCommandOptionString,
+			Name:        "location",
+			Description: ".",
+			Required:    false,
+		}).
+		WithFunction(handleWeatherCommand).
+		Build()
+}
+
 type WeatherPayload struct {
 	Weather struct {
 		Weather                       string  `json:"weather"`
@@ -179,7 +192,6 @@ func handleWeatherCommand(s *discordgo.Session, ic *discordgo.InteractionCreate)
 		if weatherName == "" {
 			weatherName = "정보 없음"
 		}
-		wEmoji := getWeatherEmoji(w.Weather)
 		windText := getWindDirectionName(w.WindDirectionDegree)
 
 		var appTempParts []string
@@ -206,30 +218,23 @@ func handleWeatherCommand(s *discordgo.Session, ic *discordgo.InteractionCreate)
 		}
 
 		lines := []string{
-			fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)", pos.Address, pos.X, pos.Y),
-			fmt.Sprintf("%s 날씨: %s", wEmoji, weatherName),
-			fmt.Sprintf("🌡️ 온도: %s°C (체감: %s)", w.Temperature, appTempStr),
-			fmt.Sprintf("💧 습도: %s%%", w.Humidity),
-			fmt.Sprintf("🌧️ 강수량: %s", precipText),
-			fmt.Sprintf("💨 풍속: %sm/s (풍향: %s)", w.WindSpeed, windText),
+			fmt.Sprintf("위치: **%s** (격자: %d, %d)", pos.Address, pos.X, pos.Y),
+			fmt.Sprintf("날씨: %s", weatherName),
+			fmt.Sprintf("온도: %s°C (체감: %s)", w.Temperature, appTempStr),
+			fmt.Sprintf("습도: %s%%", w.Humidity),
+			fmt.Sprintf("강수량: %s", precipText),
+			fmt.Sprintf("풍속: %sm/s (풍향: %s)", w.WindSpeed, windText),
 		}
 
 		obsTime := getKMAObservationTime(time.Now())
 
-		embed := &discordgo.MessageEmbed{
-			Title:       "실시간 날씨 정보",
-			Description: strings.Join(lines, "\n"),
-			Color:       0x3498db,
-			Footer: &discordgo.MessageEmbedFooter{
-				Text: "관측 기준 시각",
-			},
-			Timestamp: obsTime.Format(time.RFC3339),
-		}
+		comps := NewComponentsBuilder().
+			WithTitle("실시간 날씨 정보").
+			WithBody(strings.Join(lines, "\n")).
+			WithFooter(fmt.Sprintf("기상청 초단기실황 • 관측 시각: %s", obsTime.Format("2006-01-02 15:04"))).
+			Build()
 
-		embeds := []*discordgo.MessageEmbed{embed}
-		_, editErr := s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
-			Embeds: &embeds,
-		})
+		_, editErr := EditInteractionComponentsV2(s, ic, comps)
 		if editErr != nil {
 			slog.Error("Failed to edit interaction response for /weather", "error", editErr)
 		}

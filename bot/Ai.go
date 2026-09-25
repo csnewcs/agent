@@ -8,10 +8,125 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
+
+func buildAskCommand(config *Config) (BotCommand, error) {
+	return NewBotCommandBuilder("ask").
+		WithDescription(".").
+		WithIntegrationTypes(&[]discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationUserInstall}).
+		WithContexts(&[]discordgo.InteractionContextType{discordgo.InteractionContextGuild, discordgo.InteractionContextBotDM, discordgo.InteractionContextPrivateChannel}).
+		AddArg(&discordgo.ApplicationCommandOption{
+			Type:        discordgo.ApplicationCommandOptionString,
+			Name:        "query",
+			Description: ".",
+			Required:    true,
+		}).
+		AddArg(&discordgo.ApplicationCommandOption{
+			Type:         discordgo.ApplicationCommandOptionString,
+			Name:         "session",
+			Description:  ".",
+			Required:     false,
+			Autocomplete: true,
+		}).
+		AddArg(&discordgo.ApplicationCommandOption{
+			Type:        discordgo.ApplicationCommandOptionBoolean,
+			Name:        "ephemeral",
+			Description: ".",
+			Required:    false,
+		}).
+		WithFunction(func(s *discordgo.Session, ic *discordgo.InteractionCreate) {
+			query := getInteractionOptionString(ic, "query")
+			if query == "" {
+				return
+			}
+
+			ephemeralVal, hasEphemeralOpt := getInteractionOptionBool(ic, "ephemeral")
+
+			sessionArg := getInteractionOptionString(ic, "session")
+			if sessionArg == "new" {
+				// Create new session
+				newSession := incrementSessionID()
+				if err := ActivateSession(db, newSession); err != nil {
+					slog.Error("Failed to activate new session in DB", "error", err)
+				}
+				slog.Info("Created new session via ask command", "session_id", newSession)
+			} else if sessionArg != "" {
+				// Switch to existing session
+				var val int
+				if _, err := fmt.Sscan(sessionArg, &val); err == nil {
+					if err := ActivateSession(db, sessionArg); err != nil {
+						slog.Error("Failed to activate session via ask", "error", err)
+					} else {
+						atomic.StoreInt32(&currentSessionID, int32(val))
+						slog.Info("Switched session via ask command", "session_id", val)
+					}
+				}
+			}
+
+			go func() {
+				if err := handleAIInteraction(config, s, ic, query, ephemeralVal, hasEphemeralOpt); err != nil {
+					slog.Error("Failed to handle ask command", "error", err)
+				}
+			}()
+		}).Build()
+}
+
+func handlePublishAskComponent(session *discordgo.Session, ic *discordgo.InteractionCreate) {
+	customID := ic.MessageComponentData().CustomID
+	pubID := strings.TrimPrefix(customID, "publish_ask:")
+	var responseText string
+
+	if val, ok := pendingPublishMap.LoadAndDelete(pubID); ok {
+		if str, ok := val.(string); ok {
+			responseText = str
+		}
+	}
+
+	if responseText == "" && ic.Message != nil {
+		responseText = ic.Message.Content
+	}
+
+	var existingContent string
+	if ic.Message != nil {
+		existingContent = ic.Message.Content
+	}
+	if existingContent == "" {
+		existingContent = responseText
+	}
+
+	if responseText == "" {
+		_ = session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseUpdateMessage,
+			Data: &discordgo.InteractionResponseData{
+				Content:    "답변을 찾을 수 없습니다.",
+				Components: []discordgo.MessageComponent{},
+			},
+		})
+		return
+	}
+
+	// 1. Remove button from the ephemeral message while preserving its text content
+	err := session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseUpdateMessage,
+		Data: &discordgo.InteractionResponseData{
+			Content:    existingContent,
+			Components: []discordgo.MessageComponent{},
+		},
+	})
+	if err != nil {
+		slog.Error("Failed to update component interaction", "error", err)
+	}
+
+	// 2. Publish original answer publicly via interaction followup (works in user-install & channel contexts)
+	if err := sendSplitFollowupMessages(session, ic, responseText); err != nil {
+		slog.Error("Failed to publish response via followup, trying channel send fallback", "error", err)
+		_ = sendSplitChannelMessages(session, ic.ChannelID, responseText)
+	}
+}
 
 type AIWebhookPayload struct {
 	ChannelID     string `json:"channel_id"`
@@ -83,38 +198,13 @@ func handleAIInteraction(config *Config, session *discordgo.Session, ic *discord
 	}
 	payload.SentAt = time.Now().UTC().Format(time.RFC3339)
 
-	// try to locate the user's most recent message in the channel to react to
-	var userMsgID string
-	if userID != "" {
-		msgs, err := session.ChannelMessages(payload.ChannelID, 50, "", "", "")
-		if err == nil {
-			for _, m := range msgs {
-				if m.Author != nil && m.Author.ID == userID && !m.Author.Bot {
-					userMsgID = m.ID
-					break
-				}
-			}
-		}
-	}
-
 	aiResponse, err := sendAIWebhook(config, payload)
 	if err != nil {
-		if userMsgID != "" {
-			if addErr := session.MessageReactionAdd(payload.ChannelID, userMsgID, "❌"); addErr != nil {
-				slog.Error("Failed to add failure reaction to interaction message", "error", addErr)
-			}
-		}
 		errMsg := "AI 요청 처리에 실패했습니다."
 		_, _ = session.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
 			Content: &errMsg,
 		})
 		return err
-	}
-
-	if userMsgID != "" {
-		if addErr := session.MessageReactionAdd(payload.ChannelID, userMsgID, "✅"); addErr != nil {
-			slog.Error("Failed to add success reaction to interaction message", "error", addErr)
-		}
 	}
 
 	slog.Info("n8n interaction response", "raw", aiResponse)

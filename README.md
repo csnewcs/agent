@@ -9,7 +9,12 @@
 * **`bot/`**: Go 언어로 구현된 Discord 봇입니다. 
   * 사용자 멘션 또는 슬래시 커맨드를 통해 입력된 질문을 n8n Webhook으로 중계합니다.
   * 대화 내역은 PostgreSQL DB(`agent` 데이터베이스)에 영구 저장하며 최신 30개의 히스토리만 유지합니다.
+* **`codex-proxy/`**: `codex app-server`를 stdio JSON-RPC로 유지하고 Discord/웹에 REST·NDJSON 스트리밍을 제공하는 로컬 프록시입니다.
+* **`antigravity-web/`**: 하나의 주소에서 **Antigravity / Codex** 탭을 전환해 각 세션을 관리하는 공용 웹 콘솔입니다.
 * **`kepco/`** *(Git Submodule - Upstream: `noeulnight/kepco`)*: NestJS 기반 한국전력 실시간 요금 및 사용량 조회 API 서버입니다. (Docker 환경에서는 GHCR 게시 이미지 `ghcr.io/noeulnight/kepco:latest`를 직접 불러와 사용합니다.)
+* **`health/`**: Samsung 갤럭시 스마트폰(Android 16 지원)에서 동작하는 **Mi Fitness 연동 백그라운드 데이터 수집 및 웹훅 전송 Android 앱**입니다.
+  * Health Connect API를 이용해 Mi Fitness 앱의 심박수, 산소포화도, 스트레스, 운동 기록을 수집합니다.
+  * 최근 앱 목록 삭제 시에도 백그라운드에서 최소 15분 주기로 지정된 Webhook URL로 JSON 데이터를 자동 전송합니다.
 * **`docker-compose.yml`**: 로컬 DB 및 외부 API와 충돌 없이 통신하도록 `network_mode: host` 기반으로 설계된 멀티 컨테이너 오케스트레이션 정의 파일입니다.
 
 ---
@@ -27,6 +32,7 @@ DEFAULT_CHANNEL_ID="YOUR_CHANNEL_ID"
 N8N_WEBHOOK_URL="http://localhost:5678/webhook/discord"
 N8N_TEST_WEBHOOK_URL="http://localhost:5678/webhook-test/discord"
 OPENAI_API_KEY="YOUR_OPENAI_API_KEY"
+CODEX_PROXY_URL="http://127.0.0.1:8091"
 KEPCO_ID="YOUR_KEPCO_ID"
 KEPCO_PW="YOUR_KEPCO_PASSWORD"
 DATABASE_URL="postgres://agent@localhost:5432/agent?sslmode=disable"
@@ -57,6 +63,17 @@ docker compose logs -f
 docker compose down
 ```
 
+Codex 기능은 호스트에서 `codex login` 인증이 되어 있어야 합니다. 봇과 웹을 시작하기 전에 다음 프록시를 실행합니다.
+
+```bash
+cd codex-proxy
+python3 main.py
+```
+
+### 봇 테스트
+
+`bot/`에서 `go test ./...`를 실행하면 네트워크 없이 재현 가능한 테스트만 실행됩니다. 실제 Spotify·가사 제공처·번역 API 확인은 외부 서비스 상태와 할당량에 영향을 받으므로 필요할 때만 `LYRICS_INTEGRATION=1 go test ./...`로 실행하세요. Gemini를 사용하는 확인에는 별도로 `GEMINI_API_KEY` 환경 변수가 필요합니다.
+
 ---
 
 ## 🤖 Discord Slash Commands
@@ -73,7 +90,14 @@ docker compose down
   * `query`: 질문 내용 (필수)
   * `session`: 세션 선택 (선택)
   * `ephemeral`: 응답 비공개 여부 (미선택 시 답변 출력 길이 100자 이하 전체 공개, 100자 초과 비공개)
-* **`/gohome`**: 오늘 퇴근시간(주중 18:00)까지 남은 시간을 알려줍니다.
+* **`/codex ask`**: Codex App Server에 프롬프트를 전송하고 응답, 추론, 도구 실행, 토큰 사용량을 Components V2 메시지로 스트리밍합니다.
+  * `project`, `model`, `effort`, `file`~`file5`를 선택할 수 있고, 실행 승인·중단 버튼을 제공합니다.
+  * **`/codex compact`**, **`/codex clear`**로 프로젝트 대화를 압축하거나 초기화합니다.
+* **`/gohome`**: 요일별 퇴근시간(월/수/금 17:30, 화/목 17:00, 주말/공휴일 제외)까지 남은 시간을 알려줍니다.
+* **`/dday`** (또는 **`/date`**): 기준 날짜로부터 오늘까지 지난 일수(D-Day)를 계산하여 일(Day) 단위로만 간결하게 출력합니다.
+  * `date`: 기준 날짜 (선택, 기본값: `2025.05.10`, 예: `2025.05.10`, `2025-05-10`)
+* **`/qr`** (또는 **`/qrcode`**): `m202436831<오늘날짜><현재시각>`(KST 기준) 포맷의 모바일 출입 QR코드 이미지를 생성하여 전송합니다.
+  * `ephemeral`: QR코드 비공개 여부 (선택, 기본값: 공개)
 * **`/c`**: 호스트(도커 밖 리눅스 OS) 환경에서 셸 커맨드를 직접 실행하고 결과를 반환합니다.
   * `command`: 실행할 커맨드 (필수)
 * **`/weather`**: 웹훅 서비스로부터 실시간 기상 정보(날씨, 기온, 체감온도, 습도, 강수량, 풍속/풍향)를 조회하여 임베드 형태로 보여줍니다.

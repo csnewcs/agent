@@ -19,7 +19,11 @@ func main() {
 		slog.Error("Error occured when turn on the bot", "error", err)
 		return
 	}
-	slog.Info("Bot is started...", "ID", bot.State.User.ID)
+	botID := ""
+	if bot.State != nil && bot.State.User != nil {
+		botID = bot.State.User.ID
+	}
+	slog.Info("Bot is started...", "ID", botID)
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
 	<-stop

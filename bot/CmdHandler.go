@@ -14,6 +14,19 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+func buildCCommand() (BotCommand, error) {
+	return NewBotCommandBuilder("c").
+		WithDescription(".").
+		AddArg(&discordgo.ApplicationCommandOption{
+			Type:        discordgo.ApplicationCommandOptionString,
+			Name:        "command",
+			Description: ".",
+			Required:    true,
+		}).
+		WithFunction(handleCCommand).
+		Build()
+}
+
 type SafeBuffer struct {
 	buf bytes.Buffer
 	mu  sync.Mutex
@@ -57,16 +70,16 @@ type CmdSession struct {
 
 var activeCmdMap sync.Map // map[string]*CmdSession
 
-func buildCmdEmbedAndComponents(cmdStr string, lastLines string, isFinished bool, isFailed bool, sessionID string) ([]*discordgo.MessageEmbed, []discordgo.MessageComponent) {
+func buildCmdComponents(cmdStr string, lastLines string, isFinished bool, isFailed bool, sessionID string) []discordgo.MessageComponent {
 	title := "리눅스 커맨드 실행 중..."
-	color := 0x3498db
+	statusFooter := "백그라운드 터미널 실행 중 (1초 주기 갱신)"
 	if isFinished {
 		if isFailed {
 			title = "리눅스 커맨드 실행 실패 / 중단됨"
-			color = 0xe74c3c
+			statusFooter = "프로세스 종료 (에러 또는 중단)"
 		} else {
 			title = "리눅스 커맨드 실행 완료"
-			color = 0x2ecc71
+			statusFooter = "프로세스 정상 종료"
 		}
 	}
 
@@ -80,53 +93,27 @@ func buildCmdEmbedAndComponents(cmdStr string, lastLines string, isFinished bool
 		lastLines = "..." + string(lastLinesRunes[len(lastLinesRunes)-987:])
 	}
 
-	embed := &discordgo.MessageEmbed{
-		Title: title,
-		Color: color,
-		Fields: []*discordgo.MessageEmbedField{
-			{
-				Name:   "명령어",
-				Value:  fmt.Sprintf("```bash\n$ %s\n```", cmdStr),
-				Inline: false,
-			},
-			{
-				Name:   "최근 10줄 출력",
-				Value:  fmt.Sprintf("```\n%s\n```", lastLines),
-				Inline: false,
-			},
-		},
+	body := fmt.Sprintf("**명령어**\n```bash\n$ %s\n```\n**최근 10줄 출력**\n```\n%s\n```", cmdStr, lastLines)
+
+	btnInput := discordgo.Button{
+		Label:    "입력",
+		Style:    discordgo.PrimaryButton,
+		CustomID: "c_input:" + sessionID,
+		Disabled: isFinished,
+	}
+	btnStop := discordgo.Button{
+		Label:    "중단",
+		Style:    discordgo.DangerButton,
+		CustomID: "c_stop:" + sessionID,
+		Disabled: isFinished,
 	}
 
-	components := []discordgo.MessageComponent{
-		discordgo.ActionsRow{
-			Components: []discordgo.MessageComponent{
-				discordgo.Button{
-					Label:    "입력",
-					Style:    discordgo.PrimaryButton,
-					CustomID: "c_input:" + sessionID,
-					Disabled: isFinished,
-				},
-				discordgo.Button{
-					Label:    "중단",
-					Style:    discordgo.DangerButton,
-					CustomID: "c_stop:" + sessionID,
-					Disabled: isFinished,
-				},
-			},
-		},
-	}
-
-	return []*discordgo.MessageEmbed{embed}, components
-}
-
-func getUserID(ic *discordgo.InteractionCreate) string {
-	if ic.User != nil {
-		return ic.User.ID
-	}
-	if ic.Member != nil && ic.Member.User != nil {
-		return ic.Member.User.ID
-	}
-	return ""
+	return NewComponentsBuilder().
+		WithTitle(title).
+		WithBody(body).
+		WithFooter(statusFooter).
+		WithButtons(btnInput, btnStop).
+		Build()
 }
 
 func handleCCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
@@ -178,13 +165,10 @@ func handleCCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 		return
 	}
 
-	// 명령어 시작 직후 즉시 첫 임베드를 전송하여 디스코드에 "생각 중..." 대기가 길어지지 않게 함
+	// 명령어 시작 직후 즉시 첫 컴포넌트 전송
 	initialLastLines := buf.GetLastLines(10)
-	initialEmbeds, initialComponents := buildCmdEmbedAndComponents(cmdStr, initialLastLines, false, false, sessionID)
-	_, editErr := s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
-		Embeds:     &initialEmbeds,
-		Components: &initialComponents,
-	})
+	initialComps := buildCmdComponents(cmdStr, initialLastLines, false, false, sessionID)
+	_, editErr := EditInteractionComponentsV2(s, ic, initialComps)
 	if editErr != nil {
 		slog.Error("Failed to send initial /c interaction response edit", "error", editErr)
 	}
@@ -206,11 +190,8 @@ func handleCCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 				cmdSession.Finished.Store(true)
 				isFailed := (err != nil) || cmdSession.IsKilled.Load()
 				lastLines := buf.GetLastLines(10)
-				embeds, components := buildCmdEmbedAndComponents(cmdStr, lastLines, true, isFailed, sessionID)
-				_, editErr := s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
-					Embeds:     &embeds,
-					Components: &components,
-				})
+				comps := buildCmdComponents(cmdStr, lastLines, true, isFailed, sessionID)
+				_, editErr := EditInteractionComponentsV2(s, ic, comps)
 				if editErr != nil {
 					slog.Error("Failed to send final /c interaction response edit", "error", editErr)
 				}
@@ -218,11 +199,8 @@ func handleCCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
 
 			case <-ticker.C:
 				lastLines := buf.GetLastLines(10)
-				embeds, components := buildCmdEmbedAndComponents(cmdStr, lastLines, false, false, sessionID)
-				_, editErr := s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
-					Embeds:     &embeds,
-					Components: &components,
-				})
+				comps := buildCmdComponents(cmdStr, lastLines, false, false, sessionID)
+				_, editErr := EditInteractionComponentsV2(s, ic, comps)
 				if editErr != nil {
 					slog.Error("Failed to send ticker /c interaction response edit", "error", editErr)
 				}
@@ -261,14 +239,13 @@ func HandleCmdComponent(session *discordgo.Session, ic *discordgo.InteractionCre
 	}
 
 	cmdSession := val.(*CmdSession)
-
 	userID := getUserID(ic)
-	if userID != cmdSession.OwnerID && cmdSession.OwnerID != "" {
+	if cmdSession.OwnerID != "" && !isInteractionOwnerOrAdmin(ic, cmdSession.OwnerID) {
 		slog.Warn("Cmd interaction user mismatch", "user_id", userID, "owner_id", cmdSession.OwnerID)
 		_ = session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: "명령어를 실행한 사용자만 조작할 수 있습니다.",
+				Content: "명령어를 실행한 사용자 또는 관리자만 조작할 수 있습니다.",
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
@@ -340,12 +317,11 @@ func HandleCmdModalSubmit(session *discordgo.Session, ic *discordgo.InteractionC
 
 	cmdSession := val.(*CmdSession)
 
-	userID := getUserID(ic)
-	if userID != cmdSession.OwnerID && cmdSession.OwnerID != "" {
+	if cmdSession.OwnerID != "" && !isInteractionOwnerOrAdmin(ic, cmdSession.OwnerID) {
 		_ = session.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: "명령어를 실행한 사용자만 조작할 수 있습니다.",
+				Content: "명령어를 실행한 사용자 또는 관리자만 조작할 수 있습니다.",
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})

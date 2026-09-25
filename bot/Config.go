@@ -8,14 +8,20 @@ import (
 )
 
 type Config struct {
-	Token            string
-	Mode             string
-	DefaultServerID  string
-	DefaultChannelID string
-	DBURL            string
-	TJDBURL          string
-	N8NWebhookURL    string
-	TestWebhookURL   string
+	Token                string
+	Mode                 string
+	DefaultServerID      string
+	DefaultChannelID     string
+	DBURL                string
+	TJDBURL              string
+	HomeDBURL            string
+	N8NWebhookURL        string
+	TestWebhookURL       string
+	RedisURL             string
+	AntigravityProxyPath string
+	OpenAIAPIKey         string
+	OpenAIAdminKey       string
+	GeminiAPIKey         string
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -23,15 +29,23 @@ func LoadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	openAIKey := getEnv("OPENAI_API_KEY", "")
+	openAIAdminKey := getEnv("OPENAI_ADMIN_KEY", openAIKey)
 	conf := &Config{
-		Token:            getEnv("TOKEN", ""),
-		Mode:             getEnv("MODE", "development"),
-		DefaultServerID:  getEnv("DEFAULT_SERVER_ID", ""),
-		DefaultChannelID: getEnv("DEFAULT_CHANNEL_ID", ""),
-		DBURL:            getEnv("DATABASE_URL", "postgres://agent@localhost:5432/agent?sslmode=disable"),
-		TJDBURL:          getEnv("TJ_DATABASE_URL", "postgresql://agent@localhost:5432/tj?sslmode=disable"),
-		N8NWebhookURL:    getEnv("N8N_WEBHOOK_URL", ""),
-		TestWebhookURL:   getEnv("N8N_TEST_WEBHOOK_URL", ""),
+		Token:                getEnv("TOKEN", ""),
+		Mode:                 getEnv("MODE", "development"),
+		DefaultServerID:      getEnv("DEFAULT_SERVER_ID", ""),
+		DefaultChannelID:     getEnv("DEFAULT_CHANNEL_ID", ""),
+		DBURL:                getEnv("DATABASE_URL", "postgres://agent@localhost:5432/agent?sslmode=disable"),
+		TJDBURL:              getEnv("TJ_DATABASE_URL", "postgresql://agent@localhost:5432/tj?sslmode=disable"),
+		HomeDBURL:            getEnv("HOME_DATABASE_URL", "postgresql://agent@localhost:5432/home?sslmode=disable"),
+		N8NWebhookURL:        getEnv("N8N_WEBHOOK_URL", ""),
+		TestWebhookURL:       getEnv("N8N_TEST_WEBHOOK_URL", ""),
+		RedisURL:             getEnv("REDIS_URL", "localhost:6379"),
+		AntigravityProxyPath: getEnv("ANTIGRAVITY_PROXY_PATH", "/home/fedora/git/ai-agent/antigravity-proxy/main.py"),
+		OpenAIAPIKey:         openAIKey,
+		OpenAIAdminKey:       openAIAdminKey,
+		GeminiAPIKey:         getEnv("GEMINI_API_KEY", ""),
 	}
 	if conf.Token == "" {
 		return nil, fmt.Errorf("TOKEN is not set")

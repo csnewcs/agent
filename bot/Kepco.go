@@ -4,10 +4,50 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/bwmarrin/discordgo"
 )
+
+func buildKepcoCommand() (BotCommand, error) {
+	return NewBotCommandBuilder("kepco").
+		WithDescription("한전 스마트 전력 사용량 및 실시간/예상 전기요금을 조회합니다.").
+		WithIntegrationTypes(&[]discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationUserInstall}).
+		WithContexts(&[]discordgo.InteractionContextType{discordgo.InteractionContextGuild, discordgo.InteractionContextBotDM, discordgo.InteractionContextPrivateChannel}).
+		WithFunction(handleKepcoCommand).
+		Build()
+}
+
+func handleKepcoCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
+	initialComps := NewComponentsBuilder().
+		WithTitle("실시간 전력 사용량 및 요금 조회").
+		WithBody("```\n조회 중...\n```").
+		WithFooter("KEPCO 스마트 전력 API").
+		Build()
+
+	err := RespondComponentsV2(s, ic, initialComps, false)
+	if err != nil {
+		slog.Error("Failed to respond to KEPCO interaction", "error", err)
+		return
+	}
+
+	go func() {
+		res := collectKepcoUsage()
+		comps := NewComponentsBuilder().
+			WithTitle("실시간 전력 사용량 및 요금 조회").
+			WithBody(res).
+			WithFooter(fmt.Sprintf("KEPCO 스마트 전력 API • 조회 시각: %s", time.Now().Format("15:04:05"))).
+			Build()
+
+		_, err = EditInteractionComponentsV2(s, ic, comps)
+		if err != nil {
+			slog.Error("Failed to edit KEPCO response", "error", err)
+		}
+	}()
+}
 
 type KepcoUsageResponse struct {
 	Customer struct {

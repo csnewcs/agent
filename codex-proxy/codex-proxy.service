@@ -1,0 +1,19 @@
+[Unit]
+Description=Codex App Server HTTP Streaming REST Proxy
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/fedora/git/ai-agent/codex-proxy
+Environment=PATH=/usr/local/bin:/usr/bin
+Environment=CODEX_BIN=/usr/local/bin/codex
+Environment=CODEX_PROXY_HOST=127.0.0.1
+Environment=CODEX_PROXY_PORT=8091
+Environment=CODEX_WORKSPACE_BASE=/mnt/antigravity_workspaces
+Environment=CODEX_YOLO=true
+ExecStart=/usr/bin/python3 /home/fedora/git/ai-agent/codex-proxy/main.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -22,3 +22,14 @@ bot/bot
 .DS_Store
 .vscode/
 .idea/
+
+# Local caches and generated test artifacts
+__pycache__/
+*.py[cod]
+.gradle/
+.playwright-mcp/
+uploads/
+health/local.properties
+antigravity-web/public/*_sample.jpg
+antigravity-web/public/benchmark_*
+bot/assets/fonts/Pretendard-Bold.ttf

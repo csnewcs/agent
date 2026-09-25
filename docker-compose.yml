@@ -11,6 +11,8 @@ services:
       - PORT=4000
     volumes:
       - ./kepco/.env:/app/.env
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
 
   bot:
     build:
@@ -22,7 +24,12 @@ services:
     network_mode: host
     privileged: true
     pid: host
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
     depends_on:
       - kepco
     volumes:
       - ./bot/.env:/app/.env
+      - /mnt/antigravity_workspaces:/mnt/antigravity_workspaces:ro
+      - /home/fedora/git/TrackingTJNewSongs:/TrackingTJNewSongs:ro
+      - /home/fedora/git/TrackingTJNewSongs:/home/fedora/git/TrackingTJNewSongs:ro

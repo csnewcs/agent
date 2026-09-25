@@ -4,12 +4,105 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
+	_ "time/tzdata"
+
+	"github.com/bwmarrin/discordgo"
 )
+
+func buildStatsCommand() (BotCommand, error) {
+	return NewBotCommandBuilder("stats").
+		WithDescription(".").
+		WithIntegrationTypes(&[]discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationUserInstall}).
+		WithContexts(&[]discordgo.InteractionContextType{discordgo.InteractionContextGuild, discordgo.InteractionContextBotDM, discordgo.InteractionContextPrivateChannel}).
+		WithFunction(handleStatsCommand).
+		Build()
+}
+
+func handleStatsCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
+	var mu sync.Mutex
+	serverStatus := "```\n측정 중...\n```"
+	pingStatus := "```\n측정 중...\n```"
+	antigravityStatus := "```\n측정 중...\n```"
+	codexStatus := "```\n측정 중...\n```"
+	tokenStatus := "```\n측정 중...\n```"
+
+	buildComponents := func() []discordgo.MessageComponent {
+		body := fmt.Sprintf("**[서버 자원 상태]**\n%s\n**[1.1.1.1 핑 상태]**\n%s\n**[Antigravity 쿼터]**\n%s\n**[Codex 쿼터]**\n%s\n**[OpenAI 토큰 사용량]**\n%s",
+			serverStatus, pingStatus, antigravityStatus, codexStatus, tokenStatus)
+
+		return NewComponentsBuilder().
+			WithTitle("시스템 및 서비스 상태").
+			WithBody(body).
+			WithFooter("실시간 리소스 및 API 쿼터 측정").
+			Build()
+	}
+
+	updateMessage := func() {
+		mu.Lock()
+		comps := buildComponents()
+		mu.Unlock()
+
+		_, err := EditInteractionComponentsV2(s, ic, comps)
+		if err != nil {
+			slog.Error("Failed to edit interaction response in stats", "error", err)
+		}
+	}
+
+	// Respond initially
+	err := RespondComponentsV2(s, ic, buildComponents(), false)
+	if err != nil {
+		slog.Error("Failed to respond to stats interaction", "error", err)
+		return
+	}
+
+	// Run tasks in parallel
+	go func() {
+		res := collectServerStats()
+		mu.Lock()
+		serverStatus = res
+		mu.Unlock()
+		updateMessage()
+	}()
+
+	go func() {
+		res := collectPingStats()
+		mu.Lock()
+		pingStatus = res
+		mu.Unlock()
+		updateMessage()
+	}()
+
+	go func() {
+		res := collectAntigravityQuota()
+		mu.Lock()
+		antigravityStatus = res
+		mu.Unlock()
+		updateMessage()
+	}()
+
+	go func() {
+		res := collectCodexQuota()
+		mu.Lock()
+		codexStatus = res
+		mu.Unlock()
+		updateMessage()
+	}()
+
+	go func() {
+		res := collectOpenAITokens()
+		mu.Lock()
+		tokenStatus = res
+		mu.Unlock()
+		updateMessage()
+	}()
+}
 
 func getCPUUsage() (float64, error) {
 	file, err := os.Open("/proc/stat")
@@ -138,19 +231,297 @@ func collectPingStats() string {
 	return "```\nError: Analysis failed\n```"
 }
 
-func collectOpenAITokens() string {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		return "```\nError: OPENAI_API_KEY is not set in .env\n```"
+func formatNumber(n int) string {
+	in := fmt.Sprintf("%d", n)
+	if len(in) <= 3 {
+		return in
+	}
+	var out []byte
+	rem := len(in) % 3
+	if rem > 0 {
+		out = append(out, in[:rem]...)
+		if len(in) > rem {
+			out = append(out, ',')
+		}
+	}
+	for i := rem; i < len(in); i += 3 {
+		out = append(out, in[i:i+3]...)
+		if i+3 < len(in) {
+			out = append(out, ',')
+		}
+	}
+	return string(out)
+}
+
+func formatResetTime(isoTime string) string {
+	if isoTime == "" {
+		return "N/A"
+	}
+	var t time.Time
+	var err error
+	formats := []string{
+		time.RFC3339,
+		time.RFC3339Nano,
+		"2006-01-02T15:04:05Z07:00",
+		"2006-01-02T15:04:05.000Z",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+	}
+	for _, f := range formats {
+		t, err = time.Parse(f, isoTime)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return isoTime
 	}
 
-	// Calculate start of today in local time
+	loc, lErr := time.LoadLocation("Asia/Seoul")
+	if lErr != nil || loc == nil {
+		loc = time.FixedZone("KST", 9*3600)
+	}
+	return t.In(loc).Format("2006-01-02 15:04 KST")
+}
+
+type QuotaGroup struct {
+	ID               string  `json:"id"`
+	Title            string  `json:"title"`
+	Family           string  `json:"family"`
+	RemainingPercent float64 `json:"remainingPercent"`
+	ResetTime        string  `json:"resetTime"`
+}
+
+type QuotaData struct {
+	UserTier struct {
+		Name string `json:"name"`
+	} `json:"userTier"`
+	PlanInfo struct {
+		PlanName string `json:"planName"`
+	} `json:"planInfo"`
+	PromptCredits struct {
+		Available int     `json:"available"`
+		Monthly   int     `json:"monthly"`
+		Percent   float64 `json:"percent"`
+	} `json:"promptCredits"`
+	FlowCredits struct {
+		Available int     `json:"available"`
+		Monthly   int     `json:"monthly"`
+		Percent   float64 `json:"percent"`
+	} `json:"flowCredits"`
+	QuotaGroups []QuotaGroup `json:"quotaGroups"`
+}
+
+type AntigravityQuotaResponse struct {
+	Success     bool       `json:"success"`
+	Error       string     `json:"error"`
+	Antigravity *QuotaData `json:"antigravity"`
+	UserStatus  *QuotaData `json:"userStatus"`
+	UserTier    *struct {
+		Name string `json:"name"`
+	} `json:"userTier"`
+	PlanInfo *struct {
+		PlanName string `json:"planName"`
+	} `json:"planInfo"`
+	PromptCredits *struct {
+		Available int     `json:"available"`
+		Monthly   int     `json:"monthly"`
+		Percent   float64 `json:"percent"`
+	} `json:"promptCredits"`
+	FlowCredits *struct {
+		Available int     `json:"available"`
+		Monthly   int     `json:"monthly"`
+		Percent   float64 `json:"percent"`
+	} `json:"flowCredits"`
+	QuotaGroups []QuotaGroup `json:"quotaGroups"`
+	Codex       *QuotaData   `json:"codex"`
+}
+
+func collectCodexQuota() string {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:8091/api/quota")
+	if err != nil {
+		return fmt.Sprintf("```\nError: %s\n```", err.Error())
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Sprintf("```\nError: HTTP %d\n```", resp.StatusCode)
+	}
+	var data AntigravityQuotaResponse
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil || data.Codex == nil {
+		if err != nil {
+			return fmt.Sprintf("```\nError: %s\n```", err.Error())
+		}
+		return "```\nError: Codex quota unavailable\n```"
+	}
+
+	plan := data.Codex.UserTier.Name
+	if plan == "" {
+		plan = "ChatGPT"
+	}
+	labelWidth := statsDisplayWidth("Plan")
+	for _, group := range data.Codex.QuotaGroups {
+		if width := statsDisplayWidth(group.Title); width > labelWidth {
+			labelWidth = width
+		}
+	}
+	formatLine := func(label, value string) string {
+		padding := labelWidth - statsDisplayWidth(label) + 1
+		return label + strings.Repeat(" ", padding) + ": " + value
+	}
+
+	lines := []string{formatLine("Plan", plan)}
+	for _, group := range data.Codex.QuotaGroups {
+		value := fmt.Sprintf("%.1f%%", group.RemainingPercent)
+		if reset := formatResetTime(group.ResetTime); reset != "" && reset != "N/A" {
+			value += " (Reset: " + reset + ")"
+		}
+		lines = append(lines, formatLine(group.Title, value))
+	}
+	if len(data.Codex.QuotaGroups) == 0 {
+		lines = append(lines, formatLine("쿼터", "N/A"))
+	}
+	return "```\n" + strings.Join(lines, "\n") + "\n```"
+}
+
+// statsDisplayWidth returns the approximate monospace display width used by
+// Discord code blocks. Hangul and other wide Unicode characters occupy two
+// columns even though fmt's string width counts them as a single rune.
+func statsDisplayWidth(value string) int {
+	width := 0
+	for _, r := range value {
+		if r >= 0x1100 {
+			width += 2
+		} else {
+			width++
+		}
+	}
+	return width
+}
+
+func collectAntigravityQuota() string {
+	urls := []string{
+		"http://127.0.0.1:8095/api/quota",
+		"http://127.0.0.1:8090/api/quota",
+		"http://localhost:8095/api/quota",
+		"http://localhost:8090/api/quota",
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	var data AntigravityQuotaResponse
+	var fetchErr error
+	var success bool
+
+	for _, u := range urls {
+		resp, err := client.Get(u)
+		if err != nil {
+			fetchErr = err
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			fetchErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+			continue
+		}
+		err = json.NewDecoder(resp.Body).Decode(&data)
+		resp.Body.Close()
+		if err == nil && (data.Antigravity != nil || data.PromptCredits != nil || data.UserStatus != nil || (data.Success && len(data.QuotaGroups) > 0)) {
+			fetchErr = nil
+			success = true
+			break
+		}
+	}
+
+	if !success {
+		if fetchErr != nil {
+			return fmt.Sprintf("```\nError: %s\n```", fetchErr.Error())
+		}
+		return "```\nError: Service unavailable\n```"
+	}
+
+	var qData QuotaData
+	if data.Antigravity != nil {
+		qData = *data.Antigravity
+	} else if data.UserStatus != nil {
+		qData = *data.UserStatus
+	} else {
+		if data.UserTier != nil {
+			qData.UserTier = *data.UserTier
+		}
+		if data.PlanInfo != nil {
+			qData.PlanInfo = *data.PlanInfo
+		}
+		if data.PromptCredits != nil {
+			qData.PromptCredits = *data.PromptCredits
+		}
+		if data.FlowCredits != nil {
+			qData.FlowCredits = *data.FlowCredits
+		}
+		qData.QuotaGroups = data.QuotaGroups
+	}
+
+	tierName := qData.UserTier.Name
+	if tierName == "" {
+		tierName = "Google AI Pro"
+	}
+	planName := qData.PlanInfo.PlanName
+	if planName == "" {
+		planName = "Pro"
+	}
+
+	var geminiStr, claudeStr string
+	for _, q := range qData.QuotaGroups {
+		var poolText string
+		if q.RemainingPercent >= 100.0 {
+			poolText = fmt.Sprintf("%.1f%%", q.RemainingPercent)
+		} else {
+			resetStr := formatResetTime(q.ResetTime)
+			if resetStr != "N/A" && resetStr != "" {
+				poolText = fmt.Sprintf("%.1f%% (Reset: %s)", q.RemainingPercent, resetStr)
+			} else {
+				poolText = fmt.Sprintf("%.1f%%", q.RemainingPercent)
+			}
+		}
+
+		if q.ID == "gemini_pool" {
+			geminiStr = poolText
+		} else if q.ID == "claude_gpt_pool" {
+			claudeStr = poolText
+		}
+	}
+
+	if geminiStr == "" {
+		geminiStr = "N/A"
+	}
+	if claudeStr == "" {
+		claudeStr = "N/A"
+	}
+
+	return fmt.Sprintf("```\nTier/Plan  : %s (%s)\nGemini Pool: %s\nClaude/GPT : %s\n```",
+		tierName, planName, geminiStr, claudeStr)
+}
+
+func collectOpenAITokens() string {
+	apiKey := os.Getenv("OPENAI_ADMIN_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("OPENAI_API_KEY")
+	}
+	if apiKey == "" {
+		return "```\nError: OPENAI_ADMIN_KEY is not set in .env\n```"
+	}
+
 	now := time.Now()
-	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	loc, err := time.LoadLocation("Asia/Seoul")
+	if err != nil || loc == nil {
+		loc = time.FixedZone("KST", 9*3600)
+	}
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 	startTime := startOfToday.Unix()
 
 	var promptTokens, completionTokens int
 	url := fmt.Sprintf("https://api.openai.com/v1/organization/usage/completions?start_time=%d", startTime)
+
+	client := &http.Client{Timeout: 10 * time.Second}
 
 	for url != "" {
 		req, err := http.NewRequest("GET", url, nil)
@@ -159,31 +530,37 @@ func collectOpenAITokens() string {
 		}
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 
-		client := &http.Client{Timeout: 10 * time.Second}
 		resp, err := client.Do(req)
 		if err != nil {
 			return "```\nError: API call failed: " + err.Error() + "\n```"
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
 			return fmt.Sprintf("```\nAPI Error (Status %d): %s\n```", resp.StatusCode, string(bodyBytes))
 		}
 
 		var response struct {
 			Data []struct {
-				Results []map[string]interface{} `json:"results"`
+				StartTime int                      `json:"start_time"`
+				EndTime   int                      `json:"end_time"`
+				Results   []map[string]interface{} `json:"results"`
 			} `json:"data"`
 			HasMore  bool    `json:"has_more"`
 			NextPage *string `json:"next_page"`
 		}
 
 		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			resp.Body.Close()
 			return "```\nError: JSON parse failed: " + err.Error() + "\n```"
 		}
+		resp.Body.Close()
 
 		for _, bucket := range response.Data {
+			if bucket.EndTime <= int(startTime) {
+				continue
+			}
 			for _, result := range bucket.Results {
 				for k, v := range result {
 					valFloat, ok := v.(float64)
@@ -191,9 +568,9 @@ func collectOpenAITokens() string {
 						continue
 					}
 					val := int(valFloat)
-					if k == "input_tokens" || k == "prompt_tokens" {
+					if k == "input_tokens" {
 						promptTokens += val
-					} else if k == "output_tokens" || k == "completion_tokens" {
+					} else if k == "output_tokens" {
 						completionTokens += val
 					}
 				}
@@ -210,5 +587,6 @@ func collectOpenAITokens() string {
 	totalTokens := promptTokens + completionTokens
 	percentage := (float64(totalTokens) / 2500000.0) * 100.0
 
-	return fmt.Sprintf("```\nPrompt    : %d tokens\nCompletion: %d tokens\nTotal     : %d tokens (%.2f%%)\n```", promptTokens, completionTokens, totalTokens, percentage)
+	return fmt.Sprintf("```\nPrompt    : %s tokens\nCompletion: %s tokens\nTotal     : %s tokens (%.2f%%)\n```",
+		formatNumber(promptTokens), formatNumber(completionTokens), formatNumber(totalTokens), percentage)
 }

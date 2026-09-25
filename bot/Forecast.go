@@ -15,6 +15,19 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+func buildForecastCommand() (BotCommand, error) {
+	return NewBotCommandBuilder("forecast").
+		WithDescription(".").
+		AddArg(&discordgo.ApplicationCommandOption{
+			Type:        discordgo.ApplicationCommandOptionString,
+			Name:        "location",
+			Description: ".",
+			Required:    false,
+		}).
+		WithFunction(handleForecastCommand).
+		Build()
+}
+
 type ForecastItem struct {
 	Weather                       string      `json:"weather"`
 	Cloud                         string      `json:"cloud"`
@@ -186,20 +199,20 @@ func buildDailySummary(dateStr string, items []string, forecastMap map[string]Fo
 
 	if hasTemp {
 		if minTemp == maxTemp {
-			parts = append(parts, fmt.Sprintf("🌡️ **%.0f°C**", maxTemp))
+			parts = append(parts, fmt.Sprintf("**%.0f°C**", maxTemp))
 		} else {
-			parts = append(parts, fmt.Sprintf("🌡️ **%.0f°C / %.0f°C**", minTemp, maxTemp))
+			parts = append(parts, fmt.Sprintf("**%.0f°C / %.0f°C**", minTemp, maxTemp))
 		}
 	}
 
 	if hasPOP {
-		parts = append(parts, fmt.Sprintf("🌧️ 강수확률 **%d%%**", maxPOP))
+		parts = append(parts, fmt.Sprintf("강수확률 **%d%%**", maxPOP))
 	}
 
 	return dateLabel, strings.Join(parts, " | ")
 }
 
-func buildSummaryEmbedAndComponents(pos *LocationPos, forecastMap map[string]ForecastItem, cacheKey string) (*discordgo.MessageEmbed, []discordgo.MessageComponent) {
+func buildSummaryComponents(pos *LocationPos, forecastMap map[string]ForecastItem, cacheKey string) []discordgo.MessageComponent {
 	var keys []string
 	for k := range forecastMap {
 		keys = append(keys, k)
@@ -221,43 +234,27 @@ func buildSummaryEmbedAndComponents(pos *LocationPos, forecastMap map[string]For
 		dateMap[dStr] = append(dateMap[dStr], k)
 	}
 
-	embed := &discordgo.MessageEmbed{
-		Title:       "🌤️ 실시간 단기예보 요약",
-		Description: fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)", pos.Address, pos.X, pos.Y),
-		Color:       0x3498db,
-		Timestamp:   time.Now().UTC().Format(time.RFC3339),
-		Footer: &discordgo.MessageEmbedFooter{
-			Text: "기상청 단기예보 기준",
-		},
-	}
+	var bodyLines []string
+	bodyLines = append(bodyLines, fmt.Sprintf("위치: **%s** (격자: %d, %d)", pos.Address, pos.X, pos.Y))
 
 	for _, dStr := range dateOrder {
-		if len(embed.Fields) >= 25 {
-			break
-		}
 		items := dateMap[dStr]
 		dateLabel, summaryVal := buildDailySummary(dStr, items, forecastMap)
-
-		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
-			Name:   fmt.Sprintf("📅 %s", dateLabel),
-			Value:  summaryVal,
-			Inline: false,
-		})
+		bodyLines = append(bodyLines, fmt.Sprintf("**%s**\n%s", dateLabel, summaryVal))
 	}
 
 	button := discordgo.Button{
-		Label:    "🔍 상세보기",
+		Label:    "상세보기",
 		Style:    discordgo.PrimaryButton,
 		CustomID: fmt.Sprintf("forecast_detail:%s:0", cacheKey),
 	}
 
-	components := []discordgo.MessageComponent{
-		discordgo.ActionsRow{
-			Components: []discordgo.MessageComponent{button},
-		},
-	}
-
-	return embed, components
+	return NewComponentsBuilder().
+		WithTitle("실시간 단기예보 요약").
+		WithBody(strings.Join(bodyLines, "\n\n")).
+		WithFooter("기상청 단기예보 기준").
+		WithButtons(button).
+		Build()
 }
 
 func handleForecastCommand(s *discordgo.Session, ic *discordgo.InteractionCreate) {
@@ -296,13 +293,9 @@ func handleForecastCommand(s *discordgo.Session, ic *discordgo.InteractionCreate
 		cacheKey := fmt.Sprintf("%s:%d:%d", pos.Address, pos.X, pos.Y)
 		forecastCache.Store(cacheKey, forecastMap)
 
-		embed, components := buildSummaryEmbedAndComponents(pos, forecastMap, cacheKey)
+		comps := buildSummaryComponents(pos, forecastMap, cacheKey)
 
-		embeds := []*discordgo.MessageEmbed{embed}
-		_, editErr := s.InteractionResponseEdit(ic.Interaction, &discordgo.WebhookEdit{
-			Embeds:     &embeds,
-			Components: &components,
-		})
+		_, editErr := EditInteractionComponentsV2(s, ic, comps)
 		if editErr != nil {
 			slog.Error("Failed to edit interaction response for /forecast", "error", editErr)
 		}
@@ -350,12 +343,12 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 			}
 		}
 
-		embed, components := buildSummaryEmbedAndComponents(pos, forecastMap, cacheKey)
+		comps := buildSummaryComponents(pos, forecastMap, cacheKey)
 		_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseUpdateMessage,
 			Data: &discordgo.InteractionResponseData{
-				Embeds:     []*discordgo.MessageEmbed{embed},
-				Components: components,
+				Components: comps,
+				Flags:      discordgo.MessageFlagsIsComponentsV2,
 			},
 		})
 		return
@@ -531,31 +524,17 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 		lines = append(lines, entry)
 	}
 
-	embed := &discordgo.MessageEmbed{
-		Title:       fmt.Sprintf("📊 시간별 상세 단기예보 (%d/%d 일차)", pageIndex+1, totalPages),
-		Description: fmt.Sprintf("📍 위치: **%s** (격자: %d, %d)\n📅 **%s** (3시간 간격)", pos.Address, pos.X, pos.Y, dateLabel),
-		Color:       0x2ecc71,
-		Timestamp:   time.Now().UTC().Format(time.RFC3339),
-		Footer: &discordgo.MessageEmbedFooter{
-			Text: "기상청 단기예보 기준",
-		},
-	}
-
 	valStr := fmt.Sprintf("```text\n%s\n```", strings.Join(lines, "\n\n"))
 	runes := []rune(valStr)
 	if len(runes) > 1000 {
 		valStr = string(runes[:990]) + "\n```"
 	}
 
-	embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
-		Name:   "🕒 3시간 간격 예보 목록",
-		Value:  valStr,
-		Inline: false,
-	})
+	body := fmt.Sprintf("위치: **%s** (격자: %d, %d)\n**%s** (3시간 간격)\n\n%s", pos.Address, pos.X, pos.Y, dateLabel, valStr)
 
 	// Pagination Navigation Buttons
 	btnPrev := discordgo.Button{
-		Label:    "◀ 이전 일자",
+		Label:    "이전 일자",
 		Style:    discordgo.PrimaryButton,
 		CustomID: fmt.Sprintf("forecast_page:%s:%d", cacheKey, pageIndex-1),
 		Disabled: (pageIndex == 0),
@@ -569,31 +548,30 @@ func handleForecastDetailComponent(s *discordgo.Session, ic *discordgo.Interacti
 	}
 
 	btnNext := discordgo.Button{
-		Label:    "다음 일자 ▶",
+		Label:    "다음 일자",
 		Style:    discordgo.PrimaryButton,
 		CustomID: fmt.Sprintf("forecast_page:%s:%d", cacheKey, pageIndex+1),
 		Disabled: (pageIndex >= totalPages-1),
 	}
 
 	btnSummary := discordgo.Button{
-		Label:    "🔙 요약보기",
+		Label:    "요약보기",
 		Style:    discordgo.SecondaryButton,
 		CustomID: fmt.Sprintf("forecast_summary:%s", cacheKey),
 	}
 
-	components := []discordgo.MessageComponent{
-		discordgo.ActionsRow{
-			Components: []discordgo.MessageComponent{btnPrev, btnIndicator, btnNext, btnSummary},
-		},
-	}
-
-	responseData := &discordgo.InteractionResponseData{
-		Embeds:     []*discordgo.MessageEmbed{embed},
-		Components: components,
-	}
+	comps := NewComponentsBuilder().
+		WithTitle(fmt.Sprintf("시간별 상세 단기예보 (%d/%d 일차)", pageIndex+1, totalPages)).
+		WithBody(body).
+		WithFooter("기상청 단기예보 기준").
+		WithButtons(btnPrev, btnIndicator, btnNext, btnSummary).
+		Build()
 
 	_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: responseData,
+		Data: &discordgo.InteractionResponseData{
+			Components: comps,
+			Flags:      discordgo.MessageFlagsIsComponentsV2,
+		},
 	})
 }

@@ -1,0 +1,11 @@
+# Source is required by the Docker builder; only omit tests and the host binary.
+**/*_test.go
+bot
+**/*.md
+**/*.py
+**/*.sh
+**/.env*
+**/.git*
+**/__pycache__
+**/tmp
+**/scratch
